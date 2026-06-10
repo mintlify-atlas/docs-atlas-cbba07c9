@@ -1,0 +1,125 @@
+---
+title: "agribot_description: Robot Model and Gazebo Simulation"
+sidebarTitle: "agribot_description"
+description: "The agribot_description package contains the URDF/Xacro robot model, Gazebo sensor plugins, farm world files, meshes, and all launch files for simulation."
+---
+
+`agribot_description` is the primary robot modeling package. It contains the URDF/Xacro description of AGRIBOT's chassis and sensors, Gazebo world files for the farm simulation, STL mesh files, and all launch files to spawn the robot and open visualization tools. Every other package in the workspace depends on the robot description defined here — it is the single source of truth for the physical model, sensor placement, and Gazebo plugin configuration.
+
+## Package Contents
+
+```
+agribot_description/
+├── urdf/
+│   ├── agribot.urdf               # Generated URDF (do not edit directly)
+│   ├── agribot_sensors.urdf.xacro # Top-level: includes body + Gazebo plugins
+│   ├── agribot_body.urdf.xacro    # Chassis links and joints
+│   ├── agribot_parts.urdf.xacro   # Wheel and part definitions
+│   ├── agribot_materials.urdf.xacro # Material color definitions
+│   ├── entry_gate.urdf            # Farm entry gate model
+│   └── gate_sensor.urdf           # Gate sensor URDF
+├── meshes/
+│   ├── base_link.STL              # Robot chassis mesh
+│   ├── wheel_1.STL – wheel_4.STL  # Wheel meshes
+│   └── camera.dae                 # Camera mesh (Collada)
+├── worlds/
+│   ├── Farm.world                 # Full farm world with crops
+│   ├── final.world                # Final simulation world
+│   └── world1.world               # Development world
+├── models/
+│   ├── CropWithWeed/              # Cylindrical crop+weed SDF model
+│   └── farm_field/                # Farm ground and soil textures
+├── maps/
+│   └── farm.yaml                  # Map origin configuration
+├── launch/
+│   ├── agribot_description.launch
+│   ├── agribot_gazebo_simulation.launch
+│   ├── agribot_rviz_display.launch
+│   └── my_world.launch
+├── config/
+│   └── joint_names_agribot.yaml
+└── rviz/
+    └── agribot_urdf.rviz
+```
+
+## URDF/Xacro Structure
+
+The robot description is split across several Xacro files to keep each concern isolated and maintainable. At build time, `xacro` processes the top-level file and resolves all includes into a single URDF loaded onto the ROS parameter server.
+
+The include chain is:
+
+- **`agribot_sensors.urdf.xacro`** (top-level) — includes `agribot_body.urdf.xacro` and declares all Gazebo simulation plugins. This is the file passed to `xacro` in every launch file.
+- **`agribot_body.urdf.xacro`** — defines the chassis (`base_link`), four wheel links and joints, IMU link, GPS link, magnetometer link, and the camera link with its `libgazebo_ros_camera.so` plugin.
+- **`agribot_parts.urdf.xacro`** — defines the `agribot_part` Xacro macro used to instantiate each wheel with the correct geometry, inertia, and joint.
+- **`agribot_materials.urdf.xacro`** — declares named URDF materials (Black, Gray, DarkGray, White, Yellow, WoodBrown, Red) that are referenced throughout the body description.
+
+The Gazebo plugins added in `agribot_sensors.urdf.xacro` are:
+
+| Plugin | Library | Purpose |
+|--------|---------|---------|
+| `gazebo_ros_control` | `libgazebo_ros_control.so` | ROS control bridge (exposes hardware interface) |
+| `skid_steer_drive_controller` | `libgazebo_ros_skid_steer_drive.so` | 4-wheel skid-steer kinematics |
+| `imu` | `libhector_gazebo_ros_imu.so` | IMU simulation with configurable Gaussian noise |
+| `gps_controller` | `libhector_gazebo_ros_gps.so` | GPS simulation with drift and noise |
+| `magnetometer` | `libhector_gazebo_ros_magnetic.so` | Magnetometer simulation |
+
+## Gazebo Plugin Configuration
+
+The skid-steer drive plugin bridges `/agribot/cmd_vel` Twist commands to individual wheel joint torques. The configuration below is extracted directly from `agribot_sensors.urdf.xacro`:
+
+```xml
+<plugin name="skid_steer_drive_controller"
+        filename="libgazebo_ros_skid_steer_drive.so">
+  <updateRate>100.0</updateRate>
+  <robotNamespace>/agribot</robotNamespace>
+  <commandTopic>/agribot/cmd_vel</commandTopic>
+  <odometryTopic>odom</odometryTopic>
+  <leftFrontJoint>base_link_to_left_wheel_F_joint</leftFrontJoint>
+  <rightFrontJoint>base_link_to_right_wheel_F_joint</rightFrontJoint>
+  <leftRearJoint>base_link_to_left_wheel_R_joint</leftRearJoint>
+  <rightRearJoint>base_link_to_right_wheel_R_joint</rightRearJoint>
+  <wheelSeparation>0.65</wheelSeparation>
+  <wheelDiameter>0.2</wheelDiameter>
+  <torque>20</torque>
+  <broadcastTF>True</broadcastTF>
+</plugin>
+```
+
+The GPS plugin uses a reference latitude/longitude centered on the test site (`21.1613108102°N, 72.7869817026°E`). Simulated drift of `5.0 m` in each axis and Gaussian noise of `0.1` approximate real-world GPS uncertainty. The IMU plugin publishes at 200 Hz to `/agribot/imu` with near-zero noise values suitable for orientation estimation.
+
+## Launch Files Reference
+
+Four launch files cover the main usage scenarios from URDF inspection to full farm simulation.
+
+```bash
+# Load URDF and publish joint states (no Gazebo)
+roslaunch agribot_description agribot_description.launch
+
+# Spawn AGRIBOT in empty Gazebo world
+roslaunch agribot_description agribot_gazebo_simulation.launch
+
+# Spawn AGRIBOT in farm field world (also starts controllers and navigation nodes)
+roslaunch agribot_description my_world.launch
+
+# Open RViz with pre-configured display
+roslaunch agribot_description agribot_rviz_display.launch
+```
+
+<AccordionGroup>
+  <Accordion title="agribot_description.launch">
+    Loads `agribot_body.urdf.xacro` as `robot_description` on the parameter server, starts `joint_state_publisher` (with optional GUI slider), and starts `robot_state_publisher` to broadcast TF transforms. Does **not** launch Gazebo — useful for inspecting the URDF model in RViz without simulation overhead.
+  </Accordion>
+  <Accordion title="agribot_gazebo_simulation.launch">
+    Launches an empty Gazebo world, adds a static TF between `base_link` and `base_footprint`, spawns the AGRIBOT model from the raw Xacro file using `spawn_model`, and publishes a `/calibrated` flag via `rostopic pub`. Intended for rapid model testing before the full farm world is loaded.
+  </Accordion>
+  <Accordion title="my_world.launch">
+    The primary full-stack launch file. Loads `Farm.world` in Gazebo, processes the Xacro description and uploads it to the parameter server, remaps joint states from `/agribot/joint_states` to `/joint_states`, publishes a static `odom → map` TF, includes `agribot_control.launch` to spawn PID controllers, and launches the `gps_converter` and `sensor_data` navigation nodes in separate xterm windows.
+  </Accordion>
+  <Accordion title="agribot_rviz_display.launch">
+    Opens RViz with the pre-configured `.rviz` file at `rviz/agribot_urdf.rviz`. Starts `joint_state_publisher` and `robot_state_publisher` so all TF frames and the robot model render correctly.
+  </Accordion>
+</AccordionGroup>
+
+<Note>
+  The `my_world.launch` file is the recommended entry point for a complete simulation session. It launches Gazebo, spawns all controllers, and starts the navigation nodes in a single command. See the [Simulation Guide](/simulation) for the recommended step-by-step startup sequence.
+</Note>

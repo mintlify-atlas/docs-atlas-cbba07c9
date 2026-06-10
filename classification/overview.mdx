@@ -1,0 +1,68 @@
+---
+title: "Crop-Weed Classification with CNN Segmentation"
+sidebarTitle: "Overview"
+description: "AGRIBOT classifies crops, weeds, and soil using Bonnet CNN trained on CWFID and BoniRob datasets, achieving real-time segmentation at ~2.5 fps on NVIDIA GPU."
+---
+
+AGRIBOT's perception module performs pixel-level semantic segmentation of farm images — classifying every pixel in the camera frame as one of three classes: **weed**, **crop**, or **soil**. Rather than bounding-box detection, the system produces dense, colour-coded prediction masks that allow the onboard actuator to target individual weed pixels with high spatial precision. The Bonnet architecture was selected over UNet as the final model because of its approximately 100× fewer parameters, making real-time inference practical on embedded GPU hardware such as the NVIDIA Jetson Nano.
+
+<Note>
+  The colour convention used throughout the project is: **Red = Weed**, **Green = Crop**, **Blue = Soil**.
+</Note>
+
+## Model Comparison
+
+Two encoder-decoder segmentation architectures were evaluated end-to-end on the same datasets before a final model was chosen for deployment.
+
+| Property | UNet (baseline) | Bonnet (selected) |
+|---|---|---|
+| Architecture | Encoder–decoder with skip connections | Residual encoder–decoder with max-unpooling |
+| Input channels | 3 (RGB) | 10 (RGB + vegetation indices + HSV) |
+| Input resolution | 128 × 128 | 512 × 384 |
+| Parameter count | Large (~millions) | ~100× fewer than UNet |
+| Real-time capable | No | Yes (~2.5 fps on 940 MX) |
+| Selected for deployment | ✗ | ✓ |
+
+**UNet** was implemented as a lightweight four-block encoder-decoder (`small_Unet` in `model.py`) with filter sizes doubling from 16 to 128, a 256-filter bottleneck, and symmetric decoder with skip connections. It provided a useful accuracy baseline but its parameter count and 128×128 crop requirement ruled out real-time use.
+
+**Bonnet** was adapted from the PRBonn lab architecture (arXiv:1709.06764). It uses depthwise-separable residual blocks and a max-unpooling decoder to achieve a far smaller footprint. Its 10-channel multi-spectral input (RGB + seven vegetation indices and HSV components) also gives it richer feature representation than plain RGB.
+
+## Explore the Classification Module
+
+<CardGroup cols={2}>
+  <Card title="Datasets" icon="database" href="/classification/datasets">
+    CWFID and BoniRob sugar beet datasets — download links, directory layout, and the 10-channel input construction.
+  </Card>
+  <Card title="Model Architectures" icon="brain" href="/classification/model-architectures">
+    UNet and Bonnet implementations in Keras — layer-by-layer breakdown, function signatures, and loading pre-trained weights.
+  </Card>
+  <Card title="Training" icon="dumbbell" href="/classification/training">
+    Configure dataset paths, loss function, callbacks, and run `main.py` to train or evaluate either model.
+  </Card>
+  <Card title="Inference" icon="play" href="/classification/inference">
+    Batch predictions with `predict.py` and live webcam/video segmentation with `real-time.py`.
+  </Card>
+</CardGroup>
+
+## Performance Metrics (BoniRob / Bonn Dataset)
+
+The table below lists label-level metrics produced by `main.py` after evaluating the trained Bonnet model on the BoniRob test split.
+
+| Label | Class | Metric |
+|---|---|---|
+| 0 | Weed | Precision & Recall reported per-class |
+| 1 | Crop | Precision & Recall reported per-class |
+| 2 | Soil | Precision & Recall reported per-class |
+
+The full numeric results — including mean IoU, mean accuracy, and per-class precision/recall values — are captured in `Documents/readme-images/bonnet-metrics.png` inside the repository.
+
+The model is compiled with **weighted categorical cross-entropy** (`class_weights = [0.90, 0.11, 0.1]` for BoniRob) to compensate for the severe class imbalance between small weed patches and the dominant soil background.
+
+## Hardware Performance
+
+| Hardware | Average Inference Speed |
+|---|---|
+| Intel Core i7 8th Gen + 4 GB NVIDIA 940 MX | ~2.5 fps |
+| NVIDIA Jetson Nano (TensorRT optimised) | 5–10× faster (estimated) |
+
+Frame capture is threaded using `imutils.video.WebcamVideoStream` to decouple I/O latency from model inference, and `imutils.video.FPS` is used for accurate frame-rate measurement during the real-time loop.

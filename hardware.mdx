@@ -1,0 +1,196 @@
+---
+title: "AGRIBOT Hardware Components and Sensor Integration"
+sidebarTitle: "Hardware"
+description: "AGRIBOT integrates an Nvidia Jetson Nano, NEO-M8N GPS, MPU-9265 IMU, and Raspberry Pi Camera v2 on a SolidWorks-designed four-wheel chassis."
+---
+
+AGRIBOT's physical form is a four-wheel skid-steer chassis designed in SolidWorks 2016 and manufactured at SVNIT Surat with assistance from Team DRISHTI. The chassis houses an **Nvidia Jetson Nano** as the central compute board, which runs all ROS navigation nodes and CNN inference simultaneously. Navigation sensors — a **NEO-M8N GPS module** and an **MPU-9265 9-DOF IMU/magnetometer** — are mounted directly on the chassis and connected to the Jetson Nano, while a **Raspberry Pi Camera v2** feeds visual data straight into the crop-weed classification model. The robot's body (`base_link`) has a mass of 3.4672 kg; each wheel has a mass of 0.411 kg and uses a 10:1 mechanical reduction drive.
+
+<Warning>
+  Due to the COVID-19 pandemic, full hardware deployment and field testing were not possible. All navigation algorithms and sensor integrations were validated in Gazebo simulation with realistic noise models. **Before deploying AGRIBOT in an actual agricultural field, the GPS waypoint accuracy, heading filter parameters, and CNN inference latency should be re-validated on the physical hardware.** Simulation-validated parameters may require field-specific tuning.
+</Warning>
+
+## Hardware Components
+
+<CardGroup cols={2}>
+  <Card title="Nvidia Jetson Nano" icon="microchip">
+    The onboard compute platform that runs all ROS nodes — including `gps_converter`, `data_manipulation`, and `autonomus_drive` — as well as real-time Bonnet CNN inference on the camera stream. Also handles remote SSH access for monitoring and development. See the [Configuring Jetson Nano wiki](https://github.com/Dhruv2012/Autonomous-Farm-Robot/wiki/Configuring-Jetson-Nano) for setup instructions.
+  </Card>
+  <Card title="NEO-M8N GPS" icon="location-dot">
+    u-blox NEO-M8N multi-GNSS receiver providing `sensor_msgs/NavSatFix` messages. In the ROS stack, these are published on `/agribot/fix` at **5 Hz**. The `gps_converter` node converts these WGS84 coordinates into local Cartesian XY using an Alvin Mercator projection relative to a fixed origin point (lat: 21.1613331649, lon: 72.7870533933).
+  </Card>
+  <Card title="MPU-9265 IMU / Magnetometer" icon="compass">
+    InvenSense MPU-9265 9-DOF sensor providing 3-axis accelerometer, 3-axis gyroscope, and 3-axis magnetometer data. The magnetometer heading is used as the primary orientation reference for autonomous navigation. An Arduino sketch (`imudata.ino`) reads the raw I²C registers and publishes the data as a ROS `std_msgs/String` message on the `imu` topic at **10 Hz**; the Gazebo simulation replaces this with `libhector_gazebo_ros_imu.so` at **200 Hz**.
+  </Card>
+  <Card title="Raspberry Pi Camera v2" icon="camera">
+    8 MP Sony IMX219 sensor streaming 640×480 RGB images. In Gazebo, this is simulated by `libgazebo_ros_camera.so` publishing on `/agribot/camera/image_raw` at **30 fps**. The image stream is passed directly to `real-time.py` for live Bonnet CNN segmentation, producing per-pixel weed/crop/soil labels overlaid on the video output.
+  </Card>
+</CardGroup>
+
+## IMU Arduino Interface
+
+The physical MPU-9265 is read by an Arduino microcontroller running `imudata.ino`, located at `agribot_ws/src/imudata/imudata.ino`. The sketch initializes the MPU via I²C, reads all 14 accelerometer and gyroscope registers at address `0x68`, encodes the values into a compact string format, and publishes them as a ROS topic using `ros_lib`. The encoding format is:
+
+```
+A{AcX}B{AcY}C{AcZ}D{GyX}E{GyY}F{GyZ}G
+```
+
+Below is the core read loop from the sketch:
+
+```cpp
+#include <ros.h>
+#include <std_msgs/String.h>
+#include <Wire.h>
+
+const int MPU_addr = 0x68;  // I2C address of the MPU-9265
+int16_t AcX, AcY, AcZ, Tmp, GyX, GyY, GyZ;
+
+std_msgs::String imu_msg;
+ros::Publisher imu("imu", &imu_msg);
+ros::NodeHandle nh;
+
+void loop() {
+  Wire.beginTransmission(MPU_addr);
+  Wire.write(0x3B);  // ACCEL_XOUT_H register
+  Wire.endTransmission(false);
+  Wire.requestFrom(MPU_addr, 14, true);
+
+  AcX = Wire.read() << 8 | Wire.read();  // 0x3B–0x3C
+  AcY = Wire.read() << 8 | Wire.read();  // 0x3D–0x3E
+  AcZ = Wire.read() << 8 | Wire.read();  // 0x3F–0x40
+  Tmp = Wire.read() << 8 | Wire.read();  // 0x41–0x42 (temperature, unused)
+  GyX = Wire.read() << 8 | Wire.read();  // 0x43–0x44
+  GyY = Wire.read() << 8 | Wire.read();  // 0x45–0x46
+  GyZ = Wire.read() << 8 | Wire.read();  // 0x47–0x48
+
+  String data = "A" + String(AcX) + "B" + String(AcY) + "C" + String(AcZ)
+              + "D" + String(GyX) + "E" + String(GyY) + "F" + String(GyZ) + "G";
+
+  if (millis() > publisher_timer) {
+    imu_msg.data = data_final;
+    imu.publish(&imu_msg);
+    publisher_timer = millis() + 100;  // 10 Hz
+    nh.spinOnce();
+  }
+}
+```
+
+<Note>
+  The Arduino sketch publishes raw 16-bit register values as a packed string, not a standard `sensor_msgs/Imu` message. The `data_manipulation.py` node on the Jetson Nano side parses this string and converts it into engineering units before applying the Kalman filter. In Gazebo simulation, the IMU plugin publishes proper `sensor_msgs/Imu` messages directly.
+</Note>
+
+## Sensor Simulation in Gazebo
+
+All hardware sensors are replicated in Gazebo using the Hector Gazebo plugin suite, configured in `agribot_sensors.urdf.xacro`. The simulation parameters are tuned to model real-world sensor behavior as closely as possible.
+
+### GPS Plugin
+
+Plugin: `libhector_gazebo_ros_gps.so`
+
+```xml
+<plugin name="gps_controller" filename="libhector_gazebo_ros_gps.so">
+  <updateRate>5.0</updateRate>
+  <robotNamespace>/agribot</robotNamespace>
+  <bodyname>gps_link</bodyname>
+  <topicname>fix</topicname>
+  <velocitytopicname>fix_velocity</velocitytopicname>
+  <referenceLatitude>21.1613108102</referenceLatitude>
+  <referenceLongitude>72.7869817026</referenceLongitude>
+  <drift>5.0 5.0 5.0</drift>
+  <gaussiannoise>0.1 0.1 0.1</gaussiannoise>
+  <velocitydrift>0 0 0</velocitydrift>
+  <velocitygaussiannoise>0.1 0.1 0.1</velocitygaussiannoise>
+</plugin>
+```
+
+The reference coordinates correspond to the SVNIT campus location. A positional drift of **5.0 m** (XYZ) and Gaussian noise of **0.1** are applied to simulate real GPS inaccuracy. This is why the navigation stack implements a Moving Median filter to smooth noisy GPS-derived headings.
+
+### IMU Plugin
+
+Plugin: `libhector_gazebo_ros_imu.so`
+
+```xml
+<plugin name="imu" filename="libhector_gazebo_ros_imu.so">
+  <robotNamespace>/agribot</robotNamespace>
+  <updateRate>200.0</updateRate>
+  <bodyName>imu_link</bodyName>
+  <topicName>imu</topicName>
+  <gaussianNoise>0.00000001</gaussianNoise>
+  <accelOffset>0 0 -9.79999999586</accelOffset>
+  <accelDrift>0.00000001 0.00000001 0.00000001</accelDrift>
+  <accelGaussianNoise>0.00000001 0.00000001 0.00000001</accelGaussianNoise>
+</plugin>
+```
+
+The IMU publishes at **200 Hz** with near-zero noise, representing a high-quality sensor in simulation. The gravity offset (`-9.8 m/s²` on Z) is pre-applied. The `imu_link` is positioned at `xyz="0 0.06 0"` relative to `base_link`.
+
+### Magnetometer Plugin
+
+Plugin: `libhector_gazebo_ros_magnetic.so`
+
+```xml
+<plugin name="magnetometer" filename="libhector_gazebo_ros_magnetic.so">
+  <updateRate>5.0</updateRate>
+  <robotNamespace>/agribot</robotNamespace>
+  <bodyName>base_link</bodyName>
+  <topicName>/magnetic</topicName>
+  <magnitude>1.0</magnitude>
+  <referenceHeading>0.0</referenceHeading>
+  <gaussianNoise>0.1 0.1 0.1</gaussianNoise>
+  <drift>0.1 0.1 0.1</drift>
+  <driftFrequency>10 10 10</driftFrequency>
+</plugin>
+```
+
+The magnetometer publishes at **5 Hz** with Gaussian noise of **0.1** and a drift frequency of 10 Hz. This relatively high noise level is intentional — it motivates the Moving Median + Kalman filter pipeline in `data_manipulation.py`.
+
+### Skid-Steer Drive Plugin
+
+Plugin: `libgazebo_ros_skid_steer_drive.so`
+
+```xml
+<plugin name="skid_steer_drive_controller"
+        filename="libgazebo_ros_skid_steer_drive.so">
+  <updateRate>100.0</updateRate>
+  <commandTopic>/agribot/cmd_vel</commandTopic>
+  <odometryTopic>odom</odometryTopic>
+  <wheelSeparation>0.65</wheelSeparation>
+  <wheelDiameter>0.2</wheelDiameter>
+  <torque>20</torque>
+  <broadcastTF>True</broadcastTF>
+  <covariance_x>0.0001</covariance_x>
+  <covariance_y>0.0001</covariance_y>
+  <covariance_yaw>0.01</covariance_yaw>
+</plugin>
+```
+
+The drive plugin runs at **100 Hz** with a wheel separation of **0.65 m** and wheel diameter of **0.2 m**. Maximum torque is **20 Nm** per wheel. Odometry covariance values are configured to reflect realistic wheel slip on soft terrain.
+
+## ROS Topic Reference
+
+The following table summarizes every sensor topic published in the AGRIBOT system, covering both the real hardware configuration and the Gazebo simulation:
+
+| Sensor | ROS Topic | Message Type | Rate |
+|---|---|---|---|
+| GPS | `/agribot/fix` | `sensor_msgs/NavSatFix` | 5 Hz |
+| IMU | `/agribot/imu` | `sensor_msgs/Imu` | 200 Hz |
+| Magnetometer | `/magnetic` | `geometry_msgs/Vector3Stamped` | 5 Hz |
+| Camera | `/agribot/camera/image_raw` | `sensor_msgs/Image` | variable |
+| Odometry | `/odom` | `nav_msgs/Odometry` | 100 Hz |
+
+<Tip>
+  In simulation, the camera topic is `/agribot/camera/image_raw` (set via `<imageTopicName>image_raw</imageTopicName>` and `<robotNamespace>agribot</robotNamespace>` in the Gazebo camera plugin). On physical hardware using the Raspberry Pi Camera v2, you may need to remap the topic from your `raspicam_node` output to match this namespace.
+</Tip>
+
+## URDF Link Frame Positions
+
+The sensor links are defined as fixed joints relative to `base_link` in `agribot_body.urdf.xacro`:
+
+| Link | Parent | Offset (xyz) | Purpose |
+|---|---|---|---|
+| `imu_link` | `base_link` | `0 0.06 0` | IMU/gyroscope frame |
+| `gps_link` | `base_link` | `0 -0.06 0` | GPS antenna phase center |
+| `magnetometer_link` | `base_link` | `0.3 0 0` | Magnetometer — forward-mounted |
+| `camera_link` | `base_link` | `0 0 0` | Camera — co-located with chassis origin |
+| `dummy_link` | — | — | Root physics frame at ground plane |
+| `base_link` | `dummy_link` | `0 0 0.26` | Chassis center, 0.26 m above ground |

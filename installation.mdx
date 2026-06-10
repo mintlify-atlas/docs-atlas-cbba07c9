@@ -1,0 +1,117 @@
+---
+title: "Installing AGRIBOT Dependencies and ROS Packages"
+sidebarTitle: "Installation"
+description: "Install ROS Melodic, Gazebo, hector plugins, and all Python dependencies required to run AGRIBOT navigation and classification modules."
+---
+
+AGRIBOT requires a full ROS Melodic installation with Gazebo 9 and several sensor simulation plugins to run the autonomous navigation stack. On top of the ROS layer, the CNN crop-weed classification pipeline depends on a set of Python packages built around TensorFlow 1.x and Keras. This guide walks through every installation step in order, from the base OS packages to building the catkin workspace.
+
+## System Requirements
+
+Before installing, confirm your environment meets these minimum specifications:
+
+<CardGroup cols={2}>
+  <Card title="Operating System" icon="laptop">
+    Ubuntu 18.04 LTS with ROS Melodic (recommended), or Ubuntu 16.04 with ROS Kinetic
+  </Card>
+  <Card title="Memory" icon="microchip">
+    At least 8 GB RAM. An NVIDIA GPU is recommended for real-time Bonnet CNN inference (tested on NVIDIA 940 MX, avg. 2.5 fps)
+  </Card>
+  <Card title="Python" icon="python">
+    Python 3.6 or later (required by the `autonomous_drive` and classification packages)
+  </Card>
+  <Card title="Simulator" icon="cube">
+    Gazebo 9 or later (included with `ros-melodic-desktop-full`)
+  </Card>
+</CardGroup>
+
+## ROS and Gazebo Installation
+
+Install ROS Melodic from the official ROS package repository. The `desktop-full` variant includes Gazebo 9, RViz, and all standard ROS tools in a single install.
+
+```bash
+sudo sh -c 'echo "deb http://packages.ros.org/ros/ubuntu bionic main" > /etc/apt/sources.list.d/ros-latest.list'
+sudo apt-key adv --keyserver 'hkp://keyserver.ubuntu.com:80' --recv-key C1CF6E31E6BADE8868B172B4F42ED6FBAB17C654
+sudo apt-get update
+sudo apt-get install ros-melodic-desktop-full
+echo "source /opt/ros/melodic/setup.bash" >> ~/.bashrc
+source ~/.bashrc
+```
+
+After installation, verify that `roscore` launches without errors before proceeding.
+
+## ROS Dependencies
+
+AGRIBOT relies on several ROS packages beyond the desktop-full bundle. Install them all with a single `apt-get` chain:
+
+```bash
+sudo apt-get install ros-melodic-hector-gazebo-plugins
+sudo apt-get install ros-melodic-gazebo-ros-control
+sudo apt-get install ros-melodic-ros-control ros-melodic-ros-controllers
+sudo apt-get install ros-melodic-teleop-tools
+sudo apt-get install ros-melodic-move-base
+sudo apt-get install ros-melodic-mapviz ros-melodic-mapviz-plugins
+sudo apt-get install ros-melodic-multires-image
+```
+
+The table below explains what each package provides in the AGRIBOT stack:
+
+| Package | Role in AGRIBOT |
+|---|---|
+| `hector-gazebo-plugins` | Simulates GPS (`libhector_gazebo_ros_gps.so`), IMU (`libhector_gazebo_ros_imu.so`), and magnetometer (`libhector_gazebo_ros_magnetic.so`) on the robot model |
+| `gazebo-ros-control` | Bridges Gazebo's physics engine with `ros_control` effort controllers |
+| `ros-control` / `ros-controllers` | Provides PID effort controllers for the four wheel joints |
+| `teleop-tools` | Enables keyboard and joystick teleoperation for manual testing |
+| `move-base` | Action server used by `AutonomusDriveAction.py` for waypoint patrol navigation |
+| `mapviz` / `mapviz-plugins` | GPS trajectory visualization alongside the Gazebo simulation |
+| `multires-image` | Required by the Mapviz tile-map plugin for satellite imagery overlays |
+
+## Python Dependencies for Classification
+
+The crop-weed classification pipeline uses a Bonnet CNN architecture trained on the CWFID and Bonn sugar beet datasets. Install all Python dependencies with `pip3`:
+
+```bash
+pip3 install tensorflow==1.x keras numpy matplotlib opencv-python scikit-learn scikit-image Pillow imutils keras-metrics
+```
+
+<Note>
+  The classification code in `Crop_Weed_Classification/model.py` was written for **TensorFlow 1.x and Keras 2.x**. Upgrading to TensorFlow 2.x will introduce breaking API changes — particularly around `keras.backend`, session handling, and model loading. Test compatibility thoroughly before upgrading your environment.
+</Note>
+
+## Build the Catkin Workspace
+
+With all system and Python dependencies in place, build the AGRIBOT catkin workspace:
+
+```bash
+cd Autonomous-Farm-Robot/agribot_ws
+catkin_make
+source devel/setup.bash
+```
+
+`catkin_make` compiles the following packages in dependency order:
+
+- `agribot` — top-level meta-package
+- `agribot_description` — URDF/xacro models, Gazebo worlds, maps, and launch files
+- `agribot_control` — PID controller configuration and spawner launch file
+- `autonomous_drive` — GPS conversion, sensor fusion, and autonomous drive Python nodes
+
+<Tip>
+  Add the workspace source command to your `~/.bashrc` so that every new terminal has the AGRIBOT packages on its ROS path automatically:
+
+  ```bash
+  echo "source ~/Autonomous-Farm-Robot/agribot_ws/devel/setup.bash" >> ~/.bashrc
+  source ~/.bashrc
+  ```
+</Tip>
+
+## Verify Installation
+
+Confirm that ROS can locate all three core AGRIBOT packages:
+
+```bash
+rospack find agribot_description
+rospack find agribot_control
+rospack find autonomous_drive
+```
+
+Each command should print the absolute path to the package directory without any errors. If a package is not found, re-run `catkin_make` in `agribot_ws` and confirm that the workspace `devel/setup.bash` has been sourced in the current shell.

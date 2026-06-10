@@ -1,0 +1,54 @@
+---
+title: "Autonomous Navigation: GPS + IMU Field Traversal"
+sidebarTitle: "Overview"
+description: "AGRIBOT navigates farm rows autonomously using GPS coordinates and magnetometer heading with a PD controller, sensor noise filtering, and Mapviz visualization."
+---
+
+AGRIBOT's autonomous navigation stack converts GPS coordinates into local XY positions, computes heading error from a magnetometer, applies noise filters, and drives the robot with a PD controller. The three ROS nodes — `gps_converter`, `data_manipulation`, and `autonomousdrive` — work in a continuous feedback loop so the robot can traverse crop rows from a start GPS fix to an operator-specified goal without human intervention.
+
+## Navigation Pipeline
+
+The following steps describe the end-to-end flow from operator input to motor commands:
+
+1. **User enters goal GPS (lat/lon) at startup.** The `gps_converter` node prompts interactively at launch and stores the target coordinates for the life of the mission.
+2. **`gps_converter` receives the current GPS fix** on `/agribot/fix`, converts both the current position and the goal to local XY using a Mercator projection, then computes the straight-line distance and bearing to the goal. Results are published to `/distance` and `angleOG`.
+3. **`data_manipulation` receives the raw magnetometer reading** on `/magnetic`, collects samples into a sliding window, applies a Moving Median filter every 8 samples, and combines the filtered heading with the GPS bearing to produce a corrected angle error on `/angle`.
+4. **`autonomousdrive` receives `/angle` and `/distance`**, runs a PD controller, and publishes linear and angular velocity commands to `/agribot/cmd_vel` to steer and propel the robot toward the goal.
+
+<CardGroup cols={2}>
+  <Card title="GPS & IMU Sensors" icon="satellite-dish" href="/navigation/gps-imu-sensors">
+    Coordinate conversion, bearing calculation, and magnetometer heading extraction.
+  </Card>
+  <Card title="Sensor Noise Filtering" icon="wave-square" href="/navigation/sensor-noise-filtering">
+    Moving Median and Kalman filter implementation details.
+  </Card>
+  <Card title="Path Planning & Control" icon="route" href="/navigation/path-planning">
+    PD controller logic, gain tuning, and waypoint patrol mode.
+  </Card>
+  <Card title="ROS Package Reference" icon="code" href="/ros/autonomous-drive">
+    Full node, topic, and launch-file reference for the autonomous_drive package.
+  </Card>
+</CardGroup>
+
+## Simulation Note
+
+<Note>
+  In Gazebo, sensor noise is simulated via Hector plugins with configurable drift and Gaussian noise parameters, matching real-sensor behavior. This allows the full navigation stack — including the noise filters — to be validated entirely in simulation before deploying to physical hardware.
+</Note>
+
+## ROS Topic Reference
+
+All topics used by the autonomous navigation stack are listed below. Topics that carry data between two nodes are marked **Pub/Sub** in the Direction column.
+
+| Topic | Direction | Type | Node | Description |
+|---|---|---|---|---|
+| `/agribot/fix` | Sub | `sensor_msgs/NavSatFix` | `gps_converter` | Current GPS position of the robot |
+| `/Pole/fix` | Sub | `sensor_msgs/NavSatFix` | `gps_converter` | Origin/pole GPS fix for dynamic origin setting |
+| `/magnetic` | Sub | `geometry_msgs/Vector3Stamped` | `data_manipulation` | Raw magnetometer reading from IMU |
+| `/currentPose` | Pub/Sub | `geometry_msgs/Pose` | `gps_converter` / `data_manipulation` | Current XY pose relative to origin |
+| `/distance` | Pub | `std_msgs/Float64` | `gps_converter` | Euclidean distance to goal in metres |
+| `angleOG` | Pub | `std_msgs/Float64` | `gps_converter` | GPS bearing angle to goal in degrees |
+| `/angle` | Pub | `std_msgs/Float64` | `data_manipulation` | Corrected heading error to goal |
+| `Filteredheading` | Pub | `std_msgs/Float64` | `data_manipulation` | Filtered magnetometer heading |
+| `/agribot/cmd_vel` | Pub | `geometry_msgs/Twist` | `autonomousdrive` | Motor velocity commands |
+| `goal_GPS` | Pub | `sensor_msgs/NavSatFix` | `gps_converter` | Goal GPS coordinates for Mapviz visualization |

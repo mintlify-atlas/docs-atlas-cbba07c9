@@ -1,0 +1,156 @@
+---
+title: "Training the Crop-Weed Segmentation Model"
+sidebarTitle: "Training"
+description: "Train Bonnet or UNet on CWFID or BoniRob datasets using main.py. Configure dataset paths, batch size, epochs, and weighted categorical cross-entropy loss."
+---
+
+Model training is orchestrated by `main.py`, which selects the model architecture and dataset, builds data generators, configures callbacks, and runs training with weighted categorical cross-entropy loss to handle class imbalance between weed, crop, and soil pixels. The script also supports reloading pre-trained weights to resume training or perform evaluation without restarting from scratch.
+
+<Warning>
+  Update all hardcoded paths in `main.py` to match your local dataset locations before running training.
+</Warning>
+
+## Training Configuration
+
+The following variables at the top of `main.py` control the training run:
+
+```python
+reload_weights = True         # Set False to train from scratch
+
+training_model = {"unet": 0, "bonnet": 1}
+dataset = {"cwfid": 0, "bonirob": 1}
+
+MODEL          = training_model["bonnet"]   # or "unet"
+DATASET        = dataset["bonirob"]         # or "cwfid"
+NO_OF_EPOCHS   = 1
+BATCH_SIZE     = 4
+results_dir    = "/path/to/results/"
+save_weights_path = results_dir + "v3.h5"
+```
+
+When `reload_weights = True`, the model is initialised with architecture weights and then `load_weights()` is called with `save_weights_path`. Set it to `False` to start a fresh training run.
+
+## Dataset Paths
+
+### BoniRob
+
+```python
+train_img_path  = '/path/to/BoniRob/input_img_preprocessed/train'
+train_mask_path = '/path/to/BoniRob/output_img_preprocessed/train'
+
+val_img_path    = '/path/to/BoniRob/input_img_preprocessed/val'
+val_mask_path   = '/path/to/BoniRob/output_img_preprocessed/val'
+
+test_img_path   = '/path/to/BoniRob/input_img_preprocessed/test'
+test_mask_path  = '/path/to/BoniRob/output_img_preprocessed/test'
+```
+
+For BoniRob, `main.py` uses `data_gen()` from `utils.py` — a Python generator that yields batches of 10-channel input arrays and flattened one-hot masks on demand, keeping memory usage constant regardless of dataset size.
+
+### CWFID
+
+```python
+path_x    = '/path/to/cwfid/WithAnnotations/images'
+path_y    = '/path/to/cwfid/WithAnnotations/annotations'
+path_yaml = '/path/to/cwfid/WithAnnotations/train_test_split.yaml'
+```
+
+For CWFID, `load_cwfid_withyaml()` reads the YAML split, loads all images into memory, and returns NumPy arrays directly — acceptable for this smaller dataset.
+
+## Loss Function
+
+Weed pixels represent a small fraction of most farm images. Plain categorical cross-entropy would therefore be dominated by the soil class. AGRIBOT uses **weighted categorical cross-entropy** defined in `utils.py` to upweight the rare weed class:
+
+```python
+# Class weights for BoniRob dataset (weed is heavily upweighted)
+class_weights = [0.90, 0.11, 0.1]   # [weed, crop, soil]
+
+wcce = weighted_categorical_crossentropy(class_weights)
+
+seg_model.compile(
+    loss=wcce,
+    optimizer='Adam',
+    metrics=[
+        'accuracy',
+        iou_coef,
+        keras_metrics.categorical_precision(label=0),   # Weed precision
+        keras_metrics.categorical_recall(label=0),      # Weed recall
+        keras_metrics.categorical_precision(label=1),   # Crop precision
+        keras_metrics.categorical_recall(label=1),      # Crop recall
+        keras_metrics.categorical_precision(label=2),   # Soil precision
+        keras_metrics.categorical_recall(label=2),      # Soil recall
+    ]
+)
+```
+
+The `iou_coef` metric computes mean Intersection-over-Union across the batch, giving a more spatially meaningful measure of segmentation quality than pixel accuracy alone.
+
+For CWFID, use `class_weights = [0.15, 0.75, 0.10]` instead, reflecting the different class distribution of carrot crop imagery.
+
+## Callbacks
+
+```python
+checkpoint = ModelCheckpoint(
+    results_dir + 'checkpoints/bonnet_{epoch:03d}_{val_loss:.2f}.hdf5',
+    monitor='val_loss',
+    save_best_only=True,
+    save_weights_only=True,
+    mode='min',
+    period=20
+)
+
+csv_logger  = CSVLogger(results_dir + 'training.csv', append=True)
+
+tensorboard = TensorBoard(log_dir=results_dir + 'graphs')
+
+stopping    = EarlyStopping(
+    monitor='val_loss',
+    min_delta=0.003,
+    patience=1,
+    restore_best_weights=True
+)
+```
+
+| Callback | Purpose |
+|---|---|
+| `ModelCheckpoint` | Saves weights every 20 epochs when validation loss improves |
+| `CSVLogger` | Appends per-epoch metrics to `training.csv` for offline analysis |
+| `TensorBoard` | Writes event files to `graphs/` for loss and accuracy visualisation |
+| `EarlyStopping` | Halts training if `val_loss` does not improve by ≥ 0.003 for one epoch |
+
+Add callbacks to `callbacks_list` before calling `fit_generator` to activate them during training.
+
+## Running Training
+
+```bash
+cd "Autonomous-Farm-Robot/Crop_Weed_ Classification/"
+python3 main.py
+```
+
+For BoniRob training, uncomment the `fit_generator` line and set the appropriate `steps_per_epoch` and `validation_steps` values:
+
+```python
+history = seg_model.fit_generator(
+    train_gen,
+    epochs=NO_OF_EPOCHS,
+    steps_per_epoch=(NO_OF_TRAINING_IMAGES // BATCH_SIZE),
+    validation_data=val_gen,
+    validation_steps=(NO_OF_VAL_IMAGES // BATCH_SIZE),
+    callbacks=callbacks_list
+)
+```
+
+## Evaluation Only
+
+To evaluate an already-trained model without re-running training, keep `reload_weights = True` and comment out the `fit_generator` call. The script will run `evaluate_generator` on the test split and print per-class metrics:
+
+```
+Loss: 0.xxxx
+Mean Accuracy: 0.xxxx
+Mean IoU: 0.xxxx
+Precision (label 0 - Weed): 0.xx   Recall (label 0 - Weed): 0.xx
+Precision (label 1 - Crop): 0.xx   Recall (label 1 - Crop): 0.xx
+Precision (label 2 - Soil): 0.xx   Recall (label 2 - Soil): 0.xx
+```
+
+The full numeric results for the published Bonnet model are available in `Documents/readme-images/bonnet-metrics.png`.

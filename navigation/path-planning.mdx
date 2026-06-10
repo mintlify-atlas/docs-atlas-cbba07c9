@@ -1,0 +1,129 @@
+---
+title: "Path Planning and PD Drive Control for AGRIBOT"
+sidebarTitle: "Path Planning"
+description: "AGRIBOT uses a GPS-waypoint PD controller with proportional-derivative gains to navigate crop rows, stop at goal, and support waypoint patrol via ROS move_base."
+---
+
+AGRIBOT's path planning is waypoint-based: the robot drives toward a GPS goal using a PD controller that computes linear and angular velocity commands from the heading error and distance to goal. There are no global maps or obstacle-avoidance planners involved — the assumption is that farm rows are clear corridors and the only task is accurate heading tracking over the distance to each waypoint. For multi-waypoint missions, the `AutonomusDriveAction.py` node wraps ROS `move_base` to cycle through a list of goal poses indefinitely.
+
+## PD Controller (GPSAlgoV1)
+
+The core control algorithm lives in `autonomus_drive.py` inside the `GPSAlgoV1()` function. It is called every time a new angle or distance message arrives, so the control loop runs at the rate of whichever topic arrives most frequently.
+
+```python
+def GPSAlgoV1():
+    global destination_flag, angle_to_goal, distance_to_goal, prev_angle_to_goal
+    velocity = Twist()
+    x_linear = 0.0
+    z_angular = 0.0
+
+    kp = 0.01   # Proportional gain
+    kd = 0.5    # Derivative gain
+
+    orientation_error = float(angle_to_goal)
+    prev_orientation_error = float(prev_angle_to_goal)
+
+    if distance_to_goal <= 0.5 or destination_flag == 1:
+        print("Destination reached!!")
+        destination_flag = 1
+        z_angular = 0
+        x_linear = 0
+
+    if destination_flag == 0:
+        if abs(orientation_error) >= 2:
+            z_angular = kp * orientation_error + kd * (orientation_error - prev_orientation_error)
+            x_linear = 0.2   # Slow turn while moving forward
+            if abs(orientation_error) > 10:
+                x_linear = 0  # Rotate in place for large errors
+            if distance_to_goal <= 1:
+                x_linear = 0
+                z_angular = 0
+                destination_flag = 1
+
+        elif abs(orientation_error) < 2:
+            z_angular = 0
+            if distance_to_goal > 1:
+                x_linear = 0.4   # Move straight to goal
+            elif distance_to_goal <= 1:
+                x_linear = 0
+                destination_flag = 1
+
+        if abs(z_angular) > 0.5:
+            z_angular = 0.5 * (abs(z_angular) / z_angular)  # Clamp angular velocity
+
+    velocity.angular.z = z_angular
+    velocity.linear.x = x_linear
+    pub.publish(velocity)
+```
+
+The control logic is organised into distinct behavioural zones based on the current heading error:
+
+- **`|error| ≥ 2°`** — The robot applies the full PD correction to `z_angular` and moves forward slowly at 0.2 m/s simultaneously, so it is always making progress toward the goal even while correcting its heading.
+- **`|error| > 10°`** — The error is large enough that forward motion would take the robot significantly off course. Linear velocity drops to zero and the robot rotates in place until the heading error falls below 10°.
+- **`|error| < 2°`** — The heading is considered aligned. Angular velocity drops to zero and the robot accelerates to full forward speed (0.4 m/s) to cover ground efficiently.
+- **`distance ≤ 1.0 m`** — The robot enters its approach zone. All motion stops and `destination_flag` is set to `1` regardless of heading error, preventing overshoot.
+- **`distance ≤ 0.5 m`** — A second hard stop threshold that catches any case where the 1 m approach zone was not triggered, e.g. due to message timing.
+- **Angular velocity clamping** — After the PD formula is evaluated, `z_angular` is clamped to ±0.5 rad/s to prevent violent spinning that could destabilize the robot or saturate the motor drivers.
+
+## Tuning the Controller
+
+The table below documents every adjustable parameter in `GPSAlgoV1()` along with its current value and its effect on robot behaviour.
+
+| Parameter | Value | Effect |
+|---|---|---|
+| `kp` | 0.01 | Proportional gain on orientation error — increase to respond faster, decrease to reduce overshoot |
+| `kd` | 0.5 | Derivative gain — dampens oscillation; too high causes jitter on noisy angle signals |
+| Goal threshold | 0.5 m | Distance at which the robot declares arrival and stops permanently |
+| Approach zone | 1.0 m | Distance at which all motion ceases early if heading is still being corrected |
+| Max angular vel | 0.5 rad/s | Hard clamp on `z_angular` output to protect drivetrain and prevent spinning |
+| Straight speed | 0.4 m/s | Linear speed when heading error is below 2° |
+| Turn speed | 0.2 m/s | Linear speed during a correction turn (error between 2° and 10°) |
+| In-place rotation threshold | 10° | Angle above which the robot halts forward motion and rotates on the spot |
+
+<Note>
+  The PD controller was tuned for Gazebo simulation conditions with the default Hector GPS plugin noise parameters. For real hardware deployment, re-tune `kp` and `kd` based on actual robot inertia, drivetrain response, and GPS update latency. Starting with `kp` an order of magnitude smaller than your expected maximum error and `kd` roughly 10–50× `kp` is a reasonable first approximation.
+</Note>
+
+## Waypoint Patrol Mode
+
+For missions that require the robot to visit multiple GPS waypoints in sequence — such as navigating to the end of each crop row and turning — `AutonomusDriveAction.py` provides a patrol loop built on top of the ROS `move_base` action server.
+
+Waypoints are defined as a Python list of `[(position_xyz, orientation_xyzw)]` tuples. Each entry specifies a target position in the `map` frame together with a goal orientation as a quaternion:
+
+```python
+waypoints = [
+    [(-7.33724421822, -0.290481491014, 0.0), (0.0, 0.0, 0.997657097136, 0.0684128389565)]
+]
+
+def goal_pose(pose):
+    goal_pose = MoveBaseGoal()
+    goal_pose.target_pose.header.frame_id = 'map'
+    goal_pose.target_pose.pose.position.x    = pose[0][0]
+    goal_pose.target_pose.pose.position.y    = pose[0][1]
+    goal_pose.target_pose.pose.position.z    = pose[0][2]
+    goal_pose.target_pose.pose.orientation.x = pose[1][0]
+    goal_pose.target_pose.pose.orientation.y = pose[1][1]
+    goal_pose.target_pose.pose.orientation.z = pose[1][2]
+    goal_pose.target_pose.pose.orientation.w = pose[1][3]
+    return goal_pose
+```
+
+The main loop sends each goal to `move_base` via a `SimpleActionClient`, waits for the result, then advances to the next waypoint. When the end of the list is reached it wraps back to the beginning, giving the robot an indefinite patrol behaviour suitable for repeated row coverage:
+
+```python
+client = actionlib.SimpleActionClient('move_base', MoveBaseAction)
+client.wait_for_server()
+while True:
+    for pose in waypoints:
+        goal = goal_pose(pose)
+        client.send_goal(goal)
+        client.wait_for_result()
+```
+
+To add more waypoints, append additional `[(x, y, z), (qx, qy, qz, qw)]` entries to the `waypoints` list. Orientation quaternions can be generated from Euler angles using `tf.transformations.quaternion_from_euler(roll, pitch, yaw)`.
+
+Run the patrol node after `move_base` is active:
+
+```bash
+rosrun autonomous_drive AutonomusDriveAction.py
+```

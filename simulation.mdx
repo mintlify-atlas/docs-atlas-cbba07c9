@@ -1,0 +1,121 @@
+---
+title: "Running AGRIBOT in Gazebo Farm Field Simulation"
+sidebarTitle: "Simulation"
+description: "Launch the AGRIBOT farm world in Gazebo, spawn crop and weed models, visualize GPS trajectory in Mapviz, and run the full sensor-in-the-loop simulation."
+---
+
+AGRIBOT includes a complete Gazebo simulation environment featuring a 50 × 50 m farm field world with textured grass and pavement tiles, a grid of cylindrical `CropWithWeed` plant models, an entry gate pole, and a surrounding scene of pine trees, oak trees, and lamp posts. The robot model itself carries simulated GPS (NEO-M8N style via `libhector_gazebo_ros_gps.so`), IMU, magnetometer, and a 640 × 480 RGB camera — all with configurable Gaussian noise — making the simulation closely representative of real-world sensor conditions.
+
+## Available Launch Files
+
+The `agribot_description` and `agribot_control` packages expose five launch files that cover every stage of the simulation workflow, from bare URDF loading through to full autonomous drive.
+
+<AccordionGroup>
+  <Accordion title="agribot_description.launch — URDF and joint state publishers">
+    Loads `agribot_body.urdf.xacro` onto the ROS parameter server and starts `robot_state_publisher` and `joint_state_publisher`. Use this for URDF inspection and RViz-only visualization without a running Gazebo instance.
+
+    **Nodes started:** `joint_state_publisher`, `robot_state_publisher`
+  </Accordion>
+
+  <Accordion title="agribot_gazebo_simulation.launch — Empty world spawn">
+    Spawns AGRIBOT (`agribot_sensors.urdf.xacro`) into an empty Gazebo world using `gazebo_ros/empty_world.launch`. Also publishes a static TF from `base_link` to `base_footprint` and fires a fake joint calibration signal on `/calibrated`.
+
+    **Nodes started:** `gazebo`, `spawn_model`, `tf_footprint_base`, `fake_joint_calibration`
+  </Accordion>
+
+  <Accordion title="my_world.launch — Farm field world spawn">
+    Spawns AGRIBOT into the custom `Farm.world` Gazebo scene. Also starts `joint_state_publisher`, `robot_state_publisher`, a static TF from `odom` to `map`, and includes `agribot_control.launch` automatically. The GPS converter and data manipulation nodes are also launched in separate `xterm` terminals from this file.
+
+    **Nodes started:** `gazebo`, `joint_state_publisher`, `robot_state_publisher`, `controller_spawner`, `gps_converter`, `sensor_data`, plus a static TF broadcaster
+  </Accordion>
+
+  <Accordion title="agribot_rviz_display.launch — RViz visualization">
+    Opens RViz with a pre-configured `agribot_urdf.rviz` display file showing the robot model, TF tree, and sensor topics. Loads `agribot_body.urdf.xacro` and starts both state publisher nodes alongside RViz.
+
+    **Nodes started:** `joint_state_publisher`, `robot_state_publisher`, `rviz`
+  </Accordion>
+
+  <Accordion title="agribot_control.launch — Effort controllers">
+    Loads the PID controller configuration from `agribot_control/config/agribot_control.yaml` and spawns four effort controllers under the `/agribot` namespace: `rightwheelR_effort_controller`, `leftwheelR_effort_controller`, `rightwheelF_effort_controller`, and `leftwheelF_effort_controller`. Also loads `agribot_sensors.urdf.xacro` onto the parameter server.
+
+    **Nodes started:** `controller_spawner`
+  </Accordion>
+</AccordionGroup>
+
+Use the commands below to launch the most common simulation configurations:
+
+```bash
+# Spawn in empty world
+roslaunch agribot_description agribot_gazebo_simulation.launch
+
+# Spawn in farm world (recommended — includes controllers and GPS nodes)
+roslaunch agribot_description my_world.launch
+
+# Visualize in RViz
+roslaunch agribot_description agribot_rviz_display.launch
+```
+
+## Farm World Description
+
+The `Farm.world` SDF file defines the complete simulation environment. Understanding its structure helps when extending or debugging the scene.
+
+**Terrain layout.** The ground plane is a 50 × 50 m static model (`farm_field_0_0`) composed of 100 tiled 5 × 5 m panels. The central band of panels uses the `vrc/pavement` material (tarmac road surface), while the surrounding panels use the `vrc/grass` material — forming a visual distinction between the robot's driving corridor and the surrounding field.
+
+**CropWithWeed models.** The farm field is populated with a grid of `CropWithWeed` SDF objects, each a cylinder of radius 0.055 m and length 0.2 m placed 0.115 m above ground. Their visual material (`CropWithWeed/Diffuse`) is driven by a custom OGRE script (`CropWithWeed.material`) that applies a plant texture PNG. The cylinder geometry provides both a collision shape for the physics engine and a surface for the camera-based CNN classifier to segment.
+
+**Simulated sensors on the robot.** The AGRIBOT model embedded in `Farm.world` runs the following Gazebo plugins:
+
+| Plugin | Topic | Update Rate |
+|---|---|---|
+| `libhector_gazebo_ros_gps.so` | `/agribot/fix`, `/agribot/fix_velocity` | 5 Hz |
+| `libhector_gazebo_ros_imu.so` | `/agribot/imu` | 200 Hz |
+| `libhector_gazebo_ros_magnetic.so` | `/magnetic` | 5 Hz |
+| `libgazebo_ros_camera.so` | `/agribot/camera/image_raw` | 30 Hz |
+| `libgazebo_ros_skid_steer_drive.so` | `/agribot/cmd_vel`, `/agribot/odom` | 100 Hz |
+
+The GPS reference origin is set to **latitude 21.161289°, longitude 72.787022°** (SVNIT campus, Surat, India). Gaussian noise of σ = 0.1 is applied to all three GPS axes and drift of 5.0 m is configured to replicate real-world GPS inaccuracy.
+
+**Map configuration.** The `maps/farm.yaml` file defines the occupancy grid used with the optional `map_server` node:
+
+```yaml
+image: field.png
+resolution: 0.1
+origin: [-10.0, -10.0, 0.0]
+negate: 0
+occupied_thresh: 0.65
+free_thresh: 0.196
+```
+
+The map origin is set 10 m west and 10 m south of the Gazebo world origin, aligning the occupancy grid with the farm field tile layout.
+
+## Teleoperation for Manual Testing
+
+Before running the autonomous drive nodes, you can drive AGRIBOT manually to verify that the controllers, motor effort publishers, and skid-steer drive plugin are working correctly. Open a new terminal and run one of the following:
+
+```bash
+# Keyboard teleoperation
+rosrun key_teleop key_teleop.py
+
+# Joystick teleoperation
+roslaunch joy_teleop example.launch
+```
+
+Both methods publish `geometry_msgs/Twist` messages to `/agribot/cmd_vel`, which the `libgazebo_ros_skid_steer_drive.so` plugin consumes to apply torque to all four wheel joints. Confirm the robot moves in the expected direction before starting the GPS navigation stack.
+
+## Recording and Replaying Sensor Data
+
+Pre-recorded ROS bag files are included in `Documents/bag_files/`. These bags capture all sensor topics (GPS fix, IMU, magnetometer, camera, odometry) from actual simulation runs and can be replayed to test the navigation and classification nodes without running a live Gazebo instance.
+
+```bash
+# Replay a recorded session
+rosbag play Documents/bag_files/data.bag
+
+# Record your own session
+rosbag record -a -O my_session.bag
+```
+
+Replaying a bag at full speed is useful for tuning the Kalman filter parameters or the CNN inference pipeline offline. Use `rosbag play --clock` and set `use_sim_time:=true` on the ROS parameter server if any nodes depend on the ROS clock.
+
+<Tip>
+  Use the Mapviz `tile_map` plugin with a satellite tile source (such as the OpenStreetMap or Bing Maps WMS endpoint) to overlay the GPS trace on a real aerial map during simulation. This makes it straightforward to correlate the simulated farm field geometry with a real field layout when preparing for hardware deployment.
+</Tip>

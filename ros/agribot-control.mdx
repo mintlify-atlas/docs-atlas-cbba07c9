@@ -1,0 +1,84 @@
+---
+title: "agribot_control: PID Wheel Controllers for Skid-Steer Drive"
+sidebarTitle: "agribot_control"
+description: "agribot_control configures four PID effort controllers for AGRIBOT's skid-steer wheels using ros_control, with joint_state_controller for state publishing."
+---
+
+`agribot_control` configures the ROS control layer for AGRIBOT's four-wheel skid-steer drivetrain. It uses `ros_control` effort controllers with PID tuning for each wheel joint, and a joint state controller for publishing current joint positions and velocities. The package contains a single YAML configuration file and one launch file — all the logic lives in the `ros_control` framework itself, which the configuration wires together.
+
+## Controller Configuration
+
+The full `agribot_control.yaml` is shown below. It defines five controllers under the `/agribot` namespace: one joint state controller and four per-wheel effort controllers, one for each corner of the skid-steer chassis.
+
+```yaml
+agribot:
+  joint_state_controller:
+    type: joint_state_controller/JointStateController
+    publish_rate: 50  # Hz
+
+  leftwheelR_effort_controller:
+    type: effort_controllers/JointEffortController
+    joint: base_link_to_left_wheel_R_joint
+    pid: {p: 100.0, i: 0.1, d: 10.0}
+
+  leftwheelF_effort_controller:
+    type: effort_controllers/JointEffortController
+    joint: base_link_to_left_wheel_F_joint
+    pid: {p: 100.0, i: 0.1, d: 10.0}
+
+  rightwheelR_effort_controller:
+    type: effort_controllers/JointEffortController
+    joint: base_link_to_right_wheel_R_joint
+    pid: {p: 100.0, i: 0.1, d: 10.0}
+
+  rightwheelF_effort_controller:
+    type: effort_controllers/JointEffortController
+    joint: base_link_to_right_wheel_F_joint
+    pid: {p: 100.0, i: 0.1, d: 10.0}
+```
+
+All four wheel controllers share identical PID gains, reflecting that the chassis is symmetric and the wheels have equivalent inertia and friction properties.
+
+## PID Parameter Reference
+
+| Parameter | Value | Description |
+|-----------|-------|-------------|
+| `p` (Proportional) | 100.0 | Main torque output per unit error — high value enables fast response to velocity commands |
+| `i` (Integral) | 0.1 | Eliminates steady-state error; kept low to avoid windup on a wheel that is momentarily slipping |
+| `d` (Derivative) | 10.0 | Dampens oscillation from the high proportional gain |
+| `publish_rate` | 50 Hz | Rate at which `joint_state_controller` publishes to `/agribot/joint_states` |
+
+## Launching the Controllers
+
+```bash
+roslaunch agribot_control agribot_control.launch
+```
+
+The launch file performs two actions in order:
+
+1. **Loads parameters** — `rosparam` uploads `agribot_control.yaml` to the ROS parameter server under the `/agribot` namespace.
+2. **Spawns controllers** — `controller_manager/spawner` starts all five controllers inside the `/agribot` namespace:
+   - `joint_state_controller`
+   - `rightwheelR_effort_controller`
+   - `leftwheelR_effort_controller`
+   - `rightwheelF_effort_controller`
+   - `leftwheelF_effort_controller`
+
+The launch file also re-processes the Xacro description and loads it as `robot_description`, ensuring the hardware interface and URDF are consistent when starting controllers standalone (outside of `my_world.launch`).
+
+## Joint Names
+
+The four joints controlled by the effort controllers map directly to the joints defined in `agribot_body.urdf.xacro`. The `joint_names_agribot.yaml` config file records these names for tooling that needs to enumerate controllable joints:
+
+| Joint Name | Position |
+|------------|----------|
+| `base_link_to_left_wheel_F_joint` | Front-left wheel |
+| `base_link_to_right_wheel_F_joint` | Front-right wheel |
+| `base_link_to_left_wheel_R_joint` | Rear-left wheel |
+| `base_link_to_right_wheel_R_joint` | Rear-right wheel |
+
+Each joint is of type `continuous` (unbounded rotation), which is required for driven wheels. The `effort_controllers/JointEffortController` accepts a torque command in Newton-metres on the topic `/agribot/<controller_name>/command`.
+
+<Note>
+  The skid-steer drive plugin (`libgazebo_ros_skid_steer_drive.so`) directly subscribes to `/agribot/cmd_vel` and handles differential drive kinematics internally — it bypasses the effort controllers entirely during normal autonomous navigation. The effort controllers are used for direct joint-level control, hardware-in-the-loop testing, and scenarios where precise torque commands are needed per wheel.
+</Note>

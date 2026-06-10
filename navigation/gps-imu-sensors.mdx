@@ -1,0 +1,137 @@
+---
+title: "GPS and IMU Sensor Integration in AGRIBOT"
+sidebarTitle: "GPS & IMU"
+description: "AGRIBOT uses an NEO-M8N GPS at 5 Hz and MPU-9265 magnetometer at 200 Hz. Coordinate conversion uses a Mercator projection for local XY navigation."
+---
+
+AGRIBOT localizes itself using two sensors — an NEO-M8N GPS module that publishes `NavSatFix` messages and an MPU-9265 9-DOF IMU/magnetometer that provides compass heading. The `GPS_data_conversion.py` node bridges raw sensor data to the navigation controller by converting geodetic coordinates to a local planar frame, computing distance and bearing to the operator-specified goal, and republishing everything the downstream `data_manipulation` and `autonomousdrive` nodes need.
+
+## GPS Coordinate Conversion
+
+Raw GPS data arrives as WGS84 latitude and longitude. Before a PD controller can work with it, those geodetic values must become linear distances in metres. The `ll2xy()` function performs this conversion using a Mercator projection anchored at a local origin point.
+
+```python
+def ll2xy(lat, lon, orglat, orglon):
+    '''
+    AlvinXY: Lat/Long to X/Y
+    Converts Lat/Lon (WGS84) to local XY in meters using a Mercator projection.
+
+    Args:
+      lat (float): Latitude of location
+      lon (float): Longitude of location
+      orglat (float): Latitude of origin location
+      orglon (float): Longitude of origin location
+
+    Returns:
+      tuple: (x, y) — Easting in m, Northing in m (local grid)
+    '''
+    x = (lon - orglon) * mdeglon(orglat)
+    y = (lat - orglat) * mdeglat(orglat)
+    return (x, y)
+```
+
+The two helper functions `mdeglat()` and `mdeglon()` return the number of metres represented by one degree of latitude and longitude respectively at a given latitude, accounting for Earth's ellipsoidal shape:
+
+```python
+def mdeglat(lat):
+    latrad = lat * 2.0 * pi / 360.0
+    dy = 111132.09 - 566.05 * cos(2.0 * latrad) \
+         + 1.20 * cos(4.0 * latrad) \
+         - 0.002 * cos(6.0 * latrad)
+    return dy
+
+def mdeglon(lat):
+    latrad = lat * 2.0 * pi / 360.0
+    dx = 111415.13 * cos(latrad) \
+         - 94.55 * cos(3.0 * latrad) \
+         + 0.12 * cos(5.0 * latrad)
+    return dx
+```
+
+Because longitude spacing varies with latitude, both functions take the current latitude as their argument. This makes the local XY frame accurate for small areas — well within the scale of any farm field.
+
+## Inverse Conversion: XY to Lat/Lon
+
+The `xy2ll()` function is the inverse of `ll2xy()`. It converts a local XY position back to WGS84 latitude and longitude by dividing out the metres-per-degree scale factors.
+
+```python
+def xy2ll(x, y, orglat, orglon):
+    '''
+    X/Y to Lat/Lon
+    Converts local XY in meters back to Lat/Lon (WGS84) using a Mercator projection.
+
+    Args:
+      x (float): Easting in m (local grid)
+      y (float): Northing in m (local grid)
+      orglat (float): Latitude of origin location
+      orglon (float): Longitude of origin location
+
+    Returns:
+      tuple: (lat, lon)
+    '''
+    lon = x / mdeglon(orglat) + orglon
+    lat = y / mdeglat(orglat) + orglat
+    return (lat, lon)
+```
+
+In practice, `xy2ll()` is used to reconstruct the goal coordinate as a `NavSatFix` message that is published on the `goal_GPS` topic. Mapviz subscribes to `goal_GPS` alongside the live `/agribot/fix` stream so operators can see both the robot position and the target waypoint on a satellite map overlay in real time.
+
+## UTM Support
+
+`GPS_data_conversion.py` also bundles complete `LLtoUTM()` and `UTMtoLL()` implementations derived from equations in USGS Bulletin 1532 (originally authored by Chuck Gantz). These functions handle the full UTM zone-letter designation, false northing for the southern hemisphere, and special zone rules for Svalbard and Norway.
+
+UTM conversion is available as an alternative to the Mercator approach when operating over areas that span multiple degrees of latitude, or when integrating with external tools that work natively in UTM coordinates. The active code path uses `ll2xy()` / `xy2ll()` via their vectorized NumPy wrappers `vll2xy` and `vxy2ll`.
+
+## Bearing and Distance Calculation
+
+Inside `get_xy_based_on_lat_long()`, the GPS callback computes three separate local XY frames to derive the distance and bearing needed by the controller:
+
+```python
+xc, yc = ll2xy(current_lat, current_lon, origin_lat, origin_lon)
+xg, yg = ll2xy(goal_lat,    goal_lon,    origin_lat, origin_lon)
+xa, ya = ll2xy(goal_lat,    goal_lon,    current_lat, current_lon)
+
+distance       = sqrt(ya**2 + xa**2)
+angle_to_goal  = atan2(ya, xa) * (180 / pi)   # degrees
+```
+
+`(xa, ya)` is the goal expressed in a frame centred on the robot's current position, so `atan2(ya, xa)` gives the bearing from the robot to the goal directly. The Euclidean norm of `(xa, ya)` gives the remaining distance in metres. Both values are published every time a new GPS fix arrives.
+
+<Note>
+  The current pose published to `/currentPose` uses `(xa, ya)` — goal relative to current position — not `(xc, yc)` (current position relative to origin). Downstream nodes in `data_manipulation` therefore see a pose that shrinks toward zero as the robot approaches the goal.
+</Note>
+
+## Magnetometer Heading
+
+Compass heading is extracted from the raw `geometry_msgs/Vector3Stamped` message published by the IMU driver on the `/magnetic` topic:
+
+```python
+def callback(msg, pub):
+    magnetic_x = msg.vector.x
+    magnetic_y = msg.vector.y
+    RawHeading = atan2(magnetic_y, magnetic_x) * 180 / pi
+```
+
+`atan2()` produces a heading in degrees measured from the positive X axis of the sensor frame. Because raw magnetometer output is noisy — particularly in environments with metallic structures or electrical cables — this value is fed directly into the Moving Median filter before being used by the controller. See [Sensor Noise Filtering](/navigation/sensor-noise-filtering) for the full filter implementation.
+
+## ROS Node: gps\_converter
+
+The `gps_converter` node is the entry point for the navigation stack. It initialises publishers and subscribers, then spins to process incoming GPS messages:
+
+```python
+rospy.init_node('gps_converter')
+Goal_latitude  = float(input("Enter Goal Latitude:"))
+Goal_longitude = float(input("Enter Goal Longitude:"))
+
+angleOG        = rospy.Publisher('angleOG',        Float64,    queue_size=5)
+GPS_pub        = rospy.Publisher('goal_GPS',        NavSatFix,  queue_size=5)
+distance_pub   = rospy.Publisher('/distance',       Float64,    queue_size=5)
+currLocation_pub = rospy.Publisher('/currentPose',  Pose,       queue_size=50)
+
+rospy.Subscriber('/agribot/fix', NavSatFix, get_xy_based_on_lat_long, currLocation_pub)
+rospy.Subscriber('/Pole/fix',   NavSatFix, publishing_OriginGPS)
+```
+
+The node prompts for the goal coordinates interactively at startup, before subscribing to any topics. This means the robot will not begin navigating until valid coordinates have been entered — a deliberate safety measure.
+
+The `/Pole/fix` subscriber calls `publishing_OriginGPS()`, which updates `startingPoint_latitude` and `startingPoint_longitude` whenever a new message arrives. Placing a second GPS receiver at a fixed pole in the field and publishing its position on `/Pole/fix` lets the operator set the coordinate origin dynamically without modifying any source code.

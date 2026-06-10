@@ -1,0 +1,99 @@
+---
+title: "CWFID and BoniRob Datasets for Crop-Weed Training"
+sidebarTitle: "Datasets"
+description: "AGRIBOT trains on two public datasets: CWFID (carrot/weed images) and the BoniRob sugar beet dataset from the University of Bonn with multi-spectral inputs."
+---
+
+Two public agricultural datasets were used to train and evaluate AGRIBOT's classification models — CWFID for initial validation and the BoniRob sugar beet dataset from the Photogrammetry & Robotics Lab at the University of Bonn for final model selection. Each dataset feeds a different preprocessing pipeline and input resolution, so it is important to understand their differences before running `main.py`.
+
+## CWFID Dataset
+
+**Full name:** Crop/Weed Field Image Dataset
+
+CWFID contains annotated RGB images of carrot crops growing alongside weed, captured in a real agricultural field. It is a compact dataset well suited for rapid prototyping and architecture validation.
+
+| Property | Value |
+|---|---|
+| Crop type | Carrot |
+| Input resolution | 128 × 128 pixels |
+| Annotation format | PNG masks (per-pixel class labels) |
+| Split definition | `train_test_split.yaml` |
+| Image directory | `images/` |
+| Annotation directory | `annotations/` |
+| URL | [https://github.com/cwfid/dataset](https://github.com/cwfid/dataset) |
+
+The YAML split file maps numeric sample indices to `train` and `test` lists. The `load_cwfid_withyaml()` helper in `utils.py` reads this file and assembles `x_train`, `y_train`, `x_test`, `y_test` arrays automatically.
+
+## BoniRob Dataset (Bonn Sugar Beets)
+
+The BoniRob dataset was captured by the BoniRob agricultural robot from the University of Bonn's Photogrammetry & Robotics Lab. It contains multi-spectral images of sugar beet fields with dense three-class pixel annotations.
+
+| Property | Value |
+|---|---|
+| Crop type | Sugar beet |
+| Labels | Weed (0), Crop (1), Soil (2) |
+| Input resolution | 512 × 384 pixels |
+| Input channels | 10 (RGB + vegetation indices + HSV) |
+| Approximate size | ~6 GB uncompressed |
+| Splits | `train/`, `val/`, `test/` under preprocessed directories |
+| URL | [https://www.ipb.uni-bonn.de/data/sugarbeets2016/](https://www.ipb.uni-bonn.de/data/sugarbeets2016/) |
+
+<Tip>
+  Download datasets before training. BoniRob is ~6 GB uncompressed; ensure you have sufficient disk space and preprocess images to 512 × 384 before running `main.py`.
+</Tip>
+
+Some samples in the BoniRob dataset have missing images on one side of the input/output pair. The file `Datasets(Git)/BoniRob dataset/Dataset Analysis` lists all such samples so they can be removed before training. The `preprocess()` helper in `utils.py` performs this filtering automatically by taking the intersection of filenames found in the input and output directories.
+
+The preprocessed dataset is then split into train, validation, and test subsets by `pre-process.py` using an 80/20/validation strategy:
+
+- **Train:** ~64 % of total samples
+- **Test:** ~20 % of total samples
+- **Validation:** ~16 % of total samples
+
+## 10-Channel Input for BoniRob
+
+Plain RGB is insufficient to reliably distinguish green weed from green crop in field conditions. AGRIBOT extends the three RGB channels with seven additional channels — computed vegetation indices and HSV colour-space components — to give the Bonnet model richer spectral information.
+
+The channel construction is implemented in `multichannel_input()` in `utils.py` and mirrored by `load_input()` in `real-time.py`:
+
+```python
+# Channel construction for BoniRob (from utils.py / real-time.py)
+# Channels 0-2: normalized RGB (R, G, B) divided by 255
+
+img[:, :, 3] = (2*G - R - B) / 255           # ExG  – Excess Green Index
+img[:, :, 4] = (1.4*R - G) / 255              # ExR  – Excess Red Index
+img[:, :, 5] = (0.881*G - 0.441*R - 0.385*B - 18.78745) / 255  # CIVE – Colour Index of Vegetation Extraction
+img[:, :, 6] = (G - R) / (G + R)              # NDI  – Normalised Difference Index
+img[:, :, 7] = hsv[:, :, 0] / 360             # Hue  (from HSV)
+img[:, :, 8] = hsv[:, :, 1]                   # Saturation (from HSV)
+img[:, :, 9] = hsv[:, :, 2] / 255             # Value (from HSV)
+```
+
+| Channel | Name | Formula |
+|---|---|---|
+| 0 | Red (normalised) | `R / 255` |
+| 1 | Green (normalised) | `G / 255` |
+| 2 | Blue (normalised) | `B / 255` |
+| 3 | ExG | `(2G − R − B) / 255` |
+| 4 | ExR | `(1.4R − G) / 255` |
+| 5 | CIVE | `(0.881G − 0.441R − 0.385B − 18.79) / 255` |
+| 6 | NDI | `(G − R) / (G + R)` |
+| 7 | Hue | `H / 360` |
+| 8 | Saturation | `S` (0–1 range from OpenCV HSV) |
+| 9 | Value | `V / 255` |
+
+All values are stored as `float16` to reduce memory pressure during batch generation.
+
+## Dataset Configuration in main.py
+
+Use the dictionaries at the top of `main.py` to switch between datasets and architectures before running training:
+
+```python
+training_model = {"unet": 0, "bonnet": 1}
+dataset = {"cwfid": 0, "bonirob": 1}
+
+MODEL   = training_model["bonnet"]   # Select Bonnet architecture
+DATASET = dataset["bonirob"]         # Select BoniRob dataset
+```
+
+When `DATASET = dataset["bonirob"]` is set, `main.py` instantiates three `data_gen()` generators (train, val, test) rather than loading everything into memory, which is essential for a dataset of this size.

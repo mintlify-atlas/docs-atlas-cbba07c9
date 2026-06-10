@@ -1,0 +1,168 @@
+---
+title: "autonomous_drive ROS Package: Navigation Nodes Reference"
+sidebarTitle: "autonomous_drive"
+description: "The autonomous_drive package contains three ROS nodes — gps_converter, data_manipulation, and autonomousdrive — that together implement GPS-guided field navigation."
+---
+
+The `autonomous_drive` package is the core navigation layer of AGRIBOT. It contains Python scripts implementing three cooperating ROS nodes that transform raw GPS and magnetometer data into motor velocity commands, plus an action-based waypoint patrol node. The nodes are intentionally separated by concern: coordinate conversion happens in one node, sensor filtering and angle computation in a second, and velocity command generation in a third. This pipeline design makes it easy to inspect or replace any stage independently.
+
+## Node: `gps_converter` (`GPS_data_conversion.py`)
+
+The `gps_converter` node is the entry point for all positional data. It converts raw WGS84 latitude/longitude readings into a local Cartesian XY frame, computes the Euclidean distance and bearing to the goal, and republishes that information for downstream nodes.
+
+**Node initialization** — the node prompts the operator for the target coordinates at startup before entering the ROS spin loop:
+
+```python
+rospy.init_node('gps_converter')
+# Prompts user at startup:
+Goal_latitude  = float(input("Enter Goal Latitude:"))
+Goal_longitude = float(input("Enter Goal Longitude:"))
+```
+
+The coordinate projection uses a Mercator-based `ll2xy()` function (AlvinXY) that converts latitude/longitude pairs to local metres relative to a dynamic origin. The origin is updated in real time from a reference GPS receiver mounted at a fixed pole on the field boundary.
+
+**Subscriptions:**
+
+| Topic | Message Type | Callback | Description |
+|-------|-------------|----------|-------------|
+| `/agribot/fix` | `NavSatFix` | `get_xy_based_on_lat_long()` | Current robot GPS position |
+| `/Pole/fix` | `NavSatFix` | `publishing_OriginGPS()` | Reference GPS at the field origin pole |
+
+**Publications:**
+
+| Topic | Message Type | Description |
+|-------|-------------|-------------|
+| `/distance` | `Float64` | Euclidean distance to goal in metres |
+| `angleOG` | `Float64` | Bearing angle from current position to goal (degrees, `atan2`-based) |
+| `/currentPose` | `Pose` | Current XY position expressed as a `Pose` message (`position.x`, `position.y`) |
+| `goal_GPS` | `NavSatFix` | Goal coordinates packaged as `NavSatFix` for Mapviz visualization |
+
+```bash
+rosrun autonomous_drive GPS_data_conversion.py
+```
+
+## Node: `data_manipulation` (`data_manipulation.py`)
+
+The `data_manipulation` node fuses magnetometer heading with the GPS bearing computed by `gps_converter`. Raw magnetometer readings are noisy, so the node applies a **Moving Median filter** over a window of 7 samples before using the heading in navigation calculations.
+
+**Subscriptions:**
+
+| Topic | Message Type | Callback | Description |
+|-------|-------------|----------|-------------|
+| `/magnetic` | `Vector3Stamped` | `callback()` | Raw magnetometer readings from `libhector_gazebo_ros_magnetic.so` |
+| `/currentPose` | `Pose` | `angle_to_move()` | Current XY position from `gps_converter` |
+| `angleOG` | `Float64` | `angleassignment()` | Cached bearing-to-goal from `gps_converter` |
+
+**Publications:**
+
+| Topic | Message Type | Description |
+|-------|-------------|-------------|
+| `Filteredheading` | `Float64` | Moving Median filtered magnetometer heading (degrees) |
+| `Rawheading` | `Float64` | Unfiltered raw heading computed from `atan2(y, x)` of the magnetic vector |
+| `/angle` | `Float64` | Corrected angle-to-move sent to the drive controller |
+
+The corrected angle-to-move is computed in `angle_to_move()` by combining the cached GPS bearing with the filtered magnetic heading and normalising the result to the `[-180, 180]` range:
+
+```python
+if angle_between_origin_to_goal < 0:
+    angleToMove = (-1) * (abs(angle_between_origin_to_goal) + Current_heading) - 90
+else:
+    angleToMove = abs(angle_between_origin_to_goal) - Current_heading - 90
+```
+
+```bash
+rosrun autonomous_drive data_manipulation.py
+```
+
+## Node: `autonomousdrive` (`autonomus_drive.py`)
+
+The `autonomousdrive` node is the lowest-level node in the pipeline. It reads the heading error and distance-to-goal produced upstream and translates them into `Twist` velocity commands on `/agribot/cmd_vel`. A proportional-derivative (PD) control law with `kp = 0.01` and `kd = 0.5` governs angular corrections while the robot also moves forward.
+
+**Subscriptions:**
+
+| Topic | Message Type | Callback | Description |
+|-------|-------------|----------|-------------|
+| `/angle` | `Float64` | `callback_for_angle()` | Heading error in degrees |
+| `/distance` | `Float64` | `callback_for_distance()` | Distance to goal in metres |
+
+**Publications:**
+
+| Topic | Message Type | Description |
+|-------|-------------|-------------|
+| `/agribot/cmd_vel` | `Twist` | Velocity commands (`linear.x`, `angular.z`) |
+
+The `GPSAlgoV1()` function implements the navigation policy:
+
+- If `|orientation_error| >= 2°` and the robot is far from the goal, it rotates while moving forward slowly (`linear.x = 0.2`).
+- If `|orientation_error| > 10°`, it rotates in place (`linear.x = 0`).
+- If `|orientation_error| < 2°`, it moves straight at full speed (`linear.x = 0.4`).
+- Angular velocity is clamped to `±0.5 rad/s`.
+- When `distance_to_goal <= 1.0 m` or `destination_flag == 1`, the node stops all motion and latches the flag.
+
+```bash
+rosrun autonomous_drive autonomus_drive.py
+```
+
+## Node: `patrol` (`AutonomusDriveAction.py`)
+
+The `patrol` node is an alternative high-level navigation client built on the `move_base` action interface. Rather than the direct GPS pipeline used by `autonomousdrive`, it sends pre-defined map-frame waypoints to a running `move_base` server, which handles local path planning and obstacle avoidance internally.
+
+Waypoints are defined as a list of `[(x, y, z), (qx, qy, qz, qw)]` tuples in the map frame:
+
+```python
+waypoints = [
+    [(-7.33724421822, -0.290481491014, 0.0),
+     (0.0, 0.0, 0.997657097136, 0.0684128389565)]
+]
+```
+
+The node cycles through the waypoint list indefinitely, sending each as a `MoveBaseGoal` and waiting for the action server to report success before advancing to the next.
+
+```bash
+rosrun autonomous_drive AutonomusDriveAction.py
+```
+
+<Warning>
+  The `patrol` node requires `move_base` to be running and a valid occupancy grid map to be available on the `/map` topic. It is independent of the `gps_converter` / `data_manipulation` pipeline.
+</Warning>
+
+## Running All Nodes Together
+
+The following sequence brings up the complete autonomous navigation stack from a cold start.
+
+<Steps>
+  <Step title="Start the Gazebo farm simulation">
+    ```bash
+    roslaunch agribot_description my_world.launch
+    ```
+    This launches Gazebo with `Farm.world`, spawns AGRIBOT, starts the PID controllers, and opens the `gps_converter` and `sensor_data` nodes in xterm windows automatically.
+  </Step>
+  <Step title="Start the wheel controllers (if not using my_world.launch)">
+    ```bash
+    roslaunch agribot_control agribot_control.launch
+    ```
+    Skip this step if you already launched `my_world.launch`, which includes `agribot_control.launch` internally.
+  </Step>
+  <Step title="Run the GPS converter and enter goal coordinates">
+    ```bash
+    rosrun autonomous_drive GPS_data_conversion.py
+    ```
+    When prompted, enter the goal latitude and longitude for the field waypoint. The node will begin publishing `/distance`, `angleOG`, and `/currentPose` immediately after.
+  </Step>
+  <Step title="Run the data manipulation node">
+    ```bash
+    rosrun autonomous_drive data_manipulation.py
+    ```
+    This node starts filtering magnetometer readings and publishing the corrected `/angle` topic consumed by the drive controller.
+  </Step>
+  <Step title="Run the autonomous drive node">
+    ```bash
+    rosrun autonomous_drive autonomus_drive.py
+    ```
+    AGRIBOT will begin navigating toward the entered goal coordinates. Monitor the terminal output for `"Moving straight to goal"`, `"Rotating..."`, and `"Destination reached!!"` status messages.
+  </Step>
+</Steps>
+
+<Tip>
+  Use `rostopic echo /distance` and `rostopic echo /angle` in separate terminals to monitor the navigation pipeline in real time without modifying any source files.
+</Tip>

@@ -1,0 +1,69 @@
+---
+title: "AGRIBOT ROS Catkin Workspace Structure"
+sidebarTitle: "Workspace"
+description: "The agribot_ws catkin workspace contains five custom ROS packages plus third-party packages for GPS, mapping, and teleoperation."
+---
+
+The AGRIBOT ROS workspace (`agribot_ws`) is a standard catkin workspace containing all ROS packages needed to model, simulate, control, and navigate the robot. It follows the standard `src/` layout with one directory per package. Custom packages handle everything from the physical robot description through sensor fusion, autonomous navigation, and manual teleoperation. Third-party packages provide GPS drivers, tile-based map visualization, and IMU firmware support.
+
+## Workspace Package Layout
+
+```
+agribot_ws/
+└── src/
+    ├── agribot/              # Meta-package (declares group dependencies)
+    ├── agribot_description/  # URDF, Gazebo worlds, meshes, launch files
+    ├── agribot_control/      # ROS controllers and PID configuration
+    ├── autonomous_drive/     # GPS navigation ROS nodes
+    ├── gps_umd/              # GPS ROS driver (gps_common, gpsd_client)
+    ├── mapviz/               # Map visualization tool
+    ├── mapviz_plugins/       # Mapviz plugins (GPS, navsat, path, etc.)
+    ├── multires_image/       # Multi-resolution tile map for Mapviz
+    ├── tile_map/             # Tile-based map plugin
+    ├── marti_messages/       # Custom ROS message types
+    ├── teleop_tools/         # Joystick, keyboard, mouse teleop
+    └── imudata/              # Arduino sketch for MPU-9265 IMU
+```
+
+## Building the Workspace
+
+Clone the repository and build all packages with `catkin_make`. Make sure ROS Melodic (or Noetic) and all system dependencies are installed before building.
+
+```bash
+cd Autonomous-Farm-Robot/agribot_ws
+catkin_make
+source devel/setup.bash
+```
+
+After sourcing `devel/setup.bash`, all package executables, launch files, and topics will be available in the current shell. Add the `source` command to your `~/.bashrc` to make it permanent.
+
+## Package Summary Table
+
+| Package | Type | Purpose |
+|---------|------|---------|
+| `agribot` | meta | Groups all agribot packages |
+| `agribot_description` | robot model | URDF, meshes, worlds, launch files |
+| `agribot_control` | controller | PID effort controllers for wheels |
+| `autonomous_drive` | navigation | GPS-based autonomous drive nodes |
+| `gps_umd` | driver | GPS ROS driver |
+| `mapviz` | visualization | Map-based visualization tool |
+| `teleop_tools` | teleop | Manual control via joystick/keyboard |
+| `marti_messages` | messages | Custom navigation and sensor messages |
+| `imudata` | firmware | Arduino sketch for IMU data acquisition |
+
+## Explore the Custom Packages
+
+<CardGroup cols={2}>
+  <Card title="agribot_description" icon="cube" href="/ros/agribot-description">
+    URDF/Xacro robot model, Gazebo sensor plugins, farm world files, meshes, and all simulation launch files.
+  </Card>
+  <Card title="agribot_control" icon="sliders" href="/ros/agribot-control">
+    PID effort controllers for AGRIBOT's four skid-steer wheels using `ros_control`.
+  </Card>
+  <Card title="autonomous_drive" icon="route" href="/ros/autonomous-drive">
+    GPS-guided field navigation nodes: GPS conversion, sensor fusion, and drive control.
+  </Card>
+  <Card title="Simulation Guide" icon="play" href="/simulation">
+    Step-by-step instructions for launching AGRIBOT in the Gazebo farm simulation.
+  </Card>
+</CardGroup>

@@ -1,0 +1,145 @@
+---
+title: "UNet and Bonnet CNN Architectures for Weed Segmentation"
+sidebarTitle: "Model Architectures"
+description: "AGRIBOT implements UNet and Bonnet segmentation models in Keras. Bonnet uses residual blocks and max-unpooling for ~100x fewer parameters than UNet."
+---
+
+AGRIBOT implements two encoder-decoder segmentation architectures in `model.py` using Keras — a compact UNet for baseline comparison, and the Bonnet architecture from PRBonn lab which was selected as the final model due to its efficiency and suitability for real-time embedded deployment. Both models produce per-pixel class probabilities across three categories: weed, crop, and soil.
+
+<Note>
+  The Bonnet architecture is based on the paper by PRBonn lab (arXiv:1709.06764). The Keras implementation in `model.py` is adapted for the CWFID and BoniRob datasets.
+</Note>
+
+## UNet Architecture (`small_Unet`)
+
+The UNet baseline is a four-level encoder-decoder with symmetric skip connections. It operates on standard 3-channel RGB input at 128 × 128 resolution, making it straightforward to train on the CWFID dataset.
+
+```python
+def small_Unet(labels, h, w, out_activation):
+    """
+    Args:
+      labels (int): Number of output classes (e.g. 3 for weed/crop/soil)
+      h (int): Input image height in pixels
+      w (int): Input image width in pixels
+      out_activation (str): 'sigmoid', 'softmax', or None
+
+    Returns:
+      keras.Model: Compiled UNet model
+    """
+```
+
+### Encoder
+
+Each encoder block applies three consecutive `Conv2D` layers with `relu` activation and `same` padding, followed by `MaxPool2D(2×2)` and `Dropout(0.5)`. The number of filters doubles with each block:
+
+| Block | Spatial size (128×128 input) | Filters |
+|---|---|---|
+| Block 1 | 128 × 128 | 16 |
+| Block 2 | 64 × 64 | 32 |
+| Block 3 | 32 × 32 | 64 |
+| Block 4 | 16 × 16 | 128 |
+| Bottleneck | 8 × 8 | 256 |
+
+### Bottleneck
+
+Two stacked `Conv2D(256, 3×3, relu)` layers form the bottleneck at the lowest spatial resolution (8 × 8 for a 128 × 128 input).
+
+### Decoder
+
+Each decoder block mirrors the encoder: `UpSampling2D(2×2)` → `Conv2D` to halve filters → `concatenate` with the corresponding encoder skip feature map → two `Conv2D` layers → `Dropout(0.5)`. Filter sizes decrease symmetrically: 128 → 64 → 32 → 16.
+
+### Output head
+
+A final `Conv2D(labels, 1×1)` collapses to the number of classes, followed by the configured activation:
+
+- `'sigmoid'` — independent per-class binary probabilities
+- `'softmax'` — mutually exclusive class probabilities (recommended for multi-class segmentation)
+- `None` — raw logits (for use with a custom loss that applies activation internally)
+
+**Input shape:** `(h, w, 3)` — RGB
+
+## Bonnet Architecture
+
+Bonnet replaces UNet's heavy 3×3 convolutions with lightweight depthwise-factorised residual blocks and replaces transposed convolutions in the decoder with mask-guided max-unpooling. The result is approximately 100× fewer parameters than the UNet baseline, enabling real-time inference on the 940 MX and Jetson Nano.
+
+```python
+def bonnet(labels, h, w):
+    """
+    Args:
+      labels (int): Number of output classes (3 for weed/crop/soil)
+      h (int): Input height (512 for BoniRob)
+      w (int): Width (384 for BoniRob)
+
+    Returns:
+      keras.Model: Bonnet segmentation model
+    """
+```
+
+**Input shape:** `(h, w, 10)` — 10-channel multi-spectral input (see [Datasets](/classification/datasets) for channel definitions).
+
+### Initial convolution (`conv_bonnet`)
+
+A single `Conv2D(16, 5×5, relu, same)` followed by `BatchNormalization` produces the initial 16-channel feature map at full resolution.
+
+### Residual block (`residual_bonnet`)
+
+Each residual block uses a factorised bottleneck to approximate a 5×5 convolution at low cost:
+
+1. `Conv2D(8, 1×1, relu)` — channel reduction
+2. `Conv2D(8, 5×1, relu)` — horizontal depthwise convolution
+3. `Conv2D(8, 1×5, relu)` — vertical depthwise convolution
+4. `Conv2D(16, 1×1, relu)` — channel expansion back to 16
+5. `Add([input, output])` — skip connection
+
+### Encoder stages
+
+Four encoder stages each apply three consecutive residual blocks followed by `MaxPooling2D(2×2, strides=2)`. Before each pooling step, a spatial **mask** is computed by comparing the pre-pool feature map to the upsampled post-pool feature map; these masks are stored and reused in the decoder.
+
+| Stage | Residual blocks | Pooling |
+|---|---|---|
+| 1 | 3 | MaxPool 2× |
+| 2 | 3 | MaxPool 2× |
+| 3 | 3 | MaxPool 2× |
+| 4 | 3 | MaxPool 2× |
+
+### Max-unpooling decoder
+
+Each decoder stage reverses one pooling step:
+
+1. `UpSampling2D(2×2)` — nearest-neighbour upsampling
+2. Element-wise multiply by the stored encoder mask (`unpooling_bonnet`) — reactivates only the spatial positions that were active in the original pooling step
+3. Three residual blocks — feature refinement
+
+Four decoder stages mirror the four encoder stages, restoring the feature map to the original spatial resolution.
+
+### Output head
+
+A `Conv2D(labels, 1×1, relu)` collapses channels to the number of classes, followed by `Reshape(h*w, labels)` and a final `Softmax` activation. The output tensor has shape `(batch, h*w, labels)`, which matches the flattened mask format expected by the weighted categorical cross-entropy loss.
+
+## Loading Models
+
+Both architectures are wrapped by convenience functions in `utils.py` that build, print a summary, and return the Keras model:
+
+```python
+from model import small_Unet, bonnet
+
+# ── UNet ────────────────────────────────────────────────────────────────────
+# 128×128 RGB input, 3 classes, softmax output
+unet_model = small_Unet(labels=3, h=128, w=128, out_activation='softmax')
+
+# ── Bonnet ───────────────────────────────────────────────────────────────────
+# 512×384 10-channel input, 3 classes
+bonnet_model = bonnet(labels=3, h=512, w=384)
+
+# Load pre-trained weights
+bonnet_model.load_weights('path/to/weights.h5')
+```
+
+The `load_unet()` wrapper additionally appends a `Reshape` and `Softmax` layer to the raw `small_Unet` output so that UNet and Bonnet share the same `(batch, h*w, labels)` output format and can be compiled with the same loss function:
+
+```python
+from utils import load_unet, load_bonnet
+
+seg_model = load_bonnet(3, 512, 384)   # returns model with summary printed
+seg_model.load_weights('v3.h5')
+```

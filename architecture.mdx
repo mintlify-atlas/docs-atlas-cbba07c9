@@ -1,0 +1,162 @@
+---
+title: "AGRIBOT System Architecture and Module Overview"
+sidebarTitle: "Architecture"
+description: "AGRIBOT is organized into four modules: robot modeling, autonomous navigation, crop-weed classification, and simulation — each implemented as ROS packages."
+---
+
+AGRIBOT follows a modular design philosophy that cleanly separates concerns across four distinct layers: the **Gazebo simulation environment** (which hosts the robot and virtual farm world), the **URDF robot model** (defined via Xacro macros and exported from SolidWorks meshes), the **ROS navigation stack** (GPS-guided waypoint following implemented in the `autonomous_drive` package), and the **CNN classification pipeline** (a standalone Python module for training and real-time inference). Each layer communicates through well-defined ROS topics, making it straightforward to swap out individual components — for example, replacing the simulated GPS plugin with a real NEO-M8N receiver requires only a change of topic source, not a rewrite of the navigation logic.
+
+## Repository Structure
+
+The repository is organized into two top-level sections: the `Crop_Weed_ Classification` directory for all deep learning work, and the `agribot_ws` Catkin workspace for all ROS-based robot software.
+
+```
+Autonomous-Farm-Robot/
+├── Crop_Weed_ Classification/   # CNN training & inference scripts
+│   ├── model.py                 # UNet and Bonnet model definitions
+│   ├── main.py                  # Training entry point
+│   ├── predict.py               # Batch image prediction
+│   ├── real-time.py             # Live webcam/video inference
+│   ├── pre-process.py           # Dataset preprocessing
+│   └── utils.py                 # Data loading helpers
+├── agribot_ws/                  # ROS Catkin workspace
+│   └── src/
+│       ├── agribot/             # Meta-package
+│       ├── agribot_description/ # URDF, meshes, Gazebo worlds, launch files
+│       ├── agribot_control/     # ROS controllers (PID effort controllers)
+│       ├── autonomous_drive/    # GPS navigation nodes
+│       ├── gps_umd/             # GPS ROS driver
+│       ├── mapviz/              # Map visualization
+│       ├── teleop_tools/        # Manual teleop (joystick, keyboard, mouse)
+│       └── marti_messages/      # Custom ROS message types
+├── Datasets(Git)/               # Dataset analysis scripts
+└── Documents/                   # Project report, presentations, research papers
+```
+
+<Info>
+  AGRIBOT targets **ROS Kinetic** on **Ubuntu 16.04** and **ROS Melodic** on **Ubuntu 18.04**. The `autonomous_drive` package depends only on `rospy`, making it easy to port to newer ROS distributions. Gazebo simulation has been validated on Gazebo 7 (Kinetic) and Gazebo 9 (Melodic).
+</Info>
+
+## ROS Package Breakdown
+
+Each package in `agribot_ws/src/` has a focused responsibility. Understanding what each one does makes it easier to extend or debug the system.
+
+### `agribot_description`
+
+This package contains everything needed to describe the robot in ROS and Gazebo:
+
+- **URDF/Xacro files** — `agribot_body.urdf.xacro` defines the base chassis, four wheels (using the `agribot_part` macro from `agribot_parts.urdf.xacro`), and all sensor link frames (IMU, GPS, magnetometer, camera). `agribot_sensors.urdf.xacro` attaches Gazebo plugins to those links.
+- **Meshes** — SolidWorks-exported STL files for `base_link.STL` and `wheel_1.STL`, referenced by all visual and collision geometries.
+- **Gazebo worlds** — simulation environments representing farm rows with cylindrical crop models.
+- **Launch files** — bring up the robot in Gazebo, spawn the URDF, and start `robot_state_publisher`.
+
+The chassis uses a **dummy link** pattern: a zero-inertia `dummy_link` is fixed to the ground plane, and `base_link` (the physical chassis, mass 3.4672 kg) is attached 0.26 m above it. This satisfies the physics engine requirement that the root link have no inertia.
+
+### `agribot_control`
+
+Manages all four wheel joints using ROS Control effort controllers with PID tuning:
+
+```yaml
+agribot:
+  joint_state_controller:
+    type: joint_state_controller/JointStateController
+    publish_rate: 50
+
+  leftwheelR_effort_controller:
+    type: effort_controllers/JointEffortController
+    joint: base_link_to_left_wheel_R_joint
+    pid: {p: 100.0, i: 0.1, d: 10.0}
+
+  leftwheelF_effort_controller:
+    type: effort_controllers/JointEffortController
+    joint: base_link_to_left_wheel_F_joint
+    pid: {p: 100.0, i: 0.1, d: 10.0}
+
+  rightwheelR_effort_controller:
+    type: effort_controllers/JointEffortController
+    joint: base_link_to_right_wheel_R_joint
+    pid: {p: 100.0, i: 0.1, d: 10.0}
+
+  rightwheelF_effort_controller:
+    type: effort_controllers/JointEffortController
+    joint: base_link_to_right_wheel_F_joint
+    pid: {p: 100.0, i: 0.1, d: 10.0}
+```
+
+Each wheel uses `hardware_interface/EffortJointInterface` with a mechanical reduction of 10:1 via `transmission_interface/SimpleTransmission`. At the Gazebo level, the skid-steer drive plugin (`libgazebo_ros_skid_steer_drive.so`) takes over locomotion by subscribing to `/agribot/cmd_vel` and publishing odometry on `/odom`.
+
+### `autonomous_drive`
+
+The navigation package, written in Python (`rospy`), contains five key scripts:
+
+- **`GPS_data_conversion.py`** — the `gps_converter` node. Subscribes to `/agribot/fix` (`NavSatFix`) and converts GPS coordinates to local XY using an Alvin Mercator projection (`ll2xy`). Publishes distance to goal on `/distance`, current local pose on `/currentPose`, and bearing to goal on `angleOG`.
+- **`data_manipulation.py`** — the `data_manipulation` node. Subscribes to `/magnetic` (`Vector3Stamped`) and applies a Moving Median filter followed by a single-dimension Kalman filter to produce a clean heading angle, published on `/angle`.
+- **`autonomus_drive.py`** — the main drive node. Combines bearing (`angleOG`) and filtered heading (`/angle`) to compute a heading error, then publishes `Twist` commands on `/agribot/cmd_vel`.
+- **`AutonomusDriveAction.py`** — action-server wrapper for sequencing multi-waypoint navigation.
+- **`plot.py`** — logs and plots heading and distance data for post-run analysis.
+
+### `gps_umd`, `mapviz`, `teleop_tools`, `marti_messages`
+
+These are supporting packages: `gps_umd` provides the real-hardware GPS ROS driver, `mapviz` provides a tile-map visualization tool where the robot's traced trajectory (blue line) and goal waypoints (green dots) are rendered, `teleop_tools` enables manual joystick or keyboard control for testing, and `marti_messages` provides custom ROS message definitions used by mapviz.
+
+## ROS Node Communication Graph
+
+The following describes the complete data flow from sensors through navigation to actuation, as implemented in the source code.
+
+<Steps>
+  <Step title="GPS Data Ingestion">
+    The Gazebo GPS plugin (`libhector_gazebo_ros_gps.so`) publishes `sensor_msgs/NavSatFix` on `/agribot/fix` at 5 Hz. In hardware mode, the `gps_umd` driver publishes the same message from the NEO-M8N module.
+  </Step>
+  <Step title="Coordinate Conversion (gps_converter node)">
+    `GPS_data_conversion.py` subscribes to `/agribot/fix` and converts the WGS84 latitude/longitude pair into a local Cartesian frame relative to the starting-point origin (lat: 21.1613331649, lon: 72.7870533933) using the Alvin Mercator `ll2xy` projection. It publishes:
+    - `/distance` (`Float64`) — Euclidean distance to the goal waypoint
+    - `/currentPose` (`Pose`) — local XY position
+    - `angleOG` (`Float64`) — bearing angle from current position to goal, computed as `atan2(dy, dx)`
+  </Step>
+  <Step title="Heading Computation (data_manipulation node)">
+    `data_manipulation.py` subscribes to `/magnetic` (`geometry_msgs/Vector3Stamped`) published by the Gazebo magnetometer plugin at 5 Hz. It applies a **Moving Median filter** and a **single-dimension Kalman filter** to reduce sensor noise, then publishes the filtered heading on `/angle` (`Float64`).
+  </Step>
+  <Step title="Autonomous Drive Decision (autonomousdrive node)">
+    `autonomus_drive.py` subscribes to both `angleOG` (desired bearing) and `/angle` (actual heading), computes the angular error, and publishes corrective `geometry_msgs/Twist` velocity commands on `/agribot/cmd_vel`.
+  </Step>
+  <Step title="Skid-Steer Actuation">
+    The Gazebo `libgazebo_ros_skid_steer_drive.so` plugin subscribes to `/agribot/cmd_vel` and drives all four wheels accordingly. Odometry is published on `/odom` at 100 Hz.
+  </Step>
+  <Step title="Crop-Weed Classification">
+    Camera frames from `/agribot/camera/image_raw` (640×480, 30 fps, RGB8) are passed directly into the Bonnet CNN model (`real-time.py`), which produces a segmentation overlay with Red = Weed, Green = Crop, Blue = Soil.
+  </Step>
+</Steps>
+
+## Subsystem Navigation
+
+<CardGroup cols={2}>
+  <Card title="Navigation Overview" icon="route" href="/navigation/overview">
+    Deep dive into the GPS-to-XY coordinate conversion, Kalman filtering, heading error control loop, and multi-waypoint field traversal strategy.
+  </Card>
+  <Card title="Classification Overview" icon="seedling" href="/classification/overview">
+    UNet vs. Bonnet architecture comparison, training setup on CWFID and Bonn datasets, inference pipeline, and model performance metrics.
+  </Card>
+  <Card title="ROS Packages" icon="box-archive" href="/ros/workspace-structure">
+    API reference for all custom ROS nodes, topics, services, and parameters in the `autonomous_drive` and `agribot_control` packages.
+  </Card>
+  <Card title="Simulation" icon="gamepad" href="/simulation">
+    How to launch the Gazebo farm world, tune sensor noise parameters, visualize the robot trajectory in Mapviz, and record ROS bags for offline analysis.
+  </Card>
+</CardGroup>
+
+## CNN Classification Pipeline
+
+The `Crop_Weed_ Classification/` directory is a self-contained Python module independent of ROS, structured for both offline training and online deployment.
+
+```
+model.py        → Defines UNet and Bonnet architectures in PyTorch
+main.py         → Training loop: loads dataset, runs epochs, saves weights
+predict.py      → Runs inference on a folder of images, saves segmented outputs
+real-time.py    → Reads from webcam or ROS camera topic, overlays predictions live
+pre-process.py  → Resizes, normalizes, and splits raw dataset images into train/val/test
+utils.py        → DataLoader helpers, class color mapping (R=Weed, G=Crop, B=Soil)
+```
+
+<Tip>
+  **Bonnet was selected over UNet** as the production model because it has approximately 100× fewer parameters, enabling real-time inference on the Nvidia Jetson Nano's embedded GPU. On an Intel Core i7 8th Gen with a 4 GB NVIDIA 940 MX, Bonnet achieves ~2.5 fps end-to-end.
+</Tip>

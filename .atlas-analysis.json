@@ -1,0 +1,85 @@
+{
+  "projectType": "ai-ml",
+  "projectName": "AGRIBOT — Autonomous Farm Robot",
+  "projectDescription": "A ROS-based autonomous agricultural robot that combines GPS/IMU-guided navigation with CNN-driven real-time crop-weed classification for hands-free weed removal in farm fields.",
+  "theme": "aspen",
+  "primaryColor": "#912d37",
+  "lightColor": "#776f67",
+  "darkColor": "#d3cfcc",
+  "navigation": {
+    "tabs": [
+      {
+        "tab": "Documentation",
+        "groups": [
+          {
+            "group": "Overview",
+            "pages": [
+              "introduction",
+              "architecture",
+              "hardware"
+            ]
+          },
+          {
+            "group": "Getting Started",
+            "pages": [
+              "quickstart",
+              "installation",
+              "simulation"
+            ]
+          },
+          {
+            "group": "Autonomous Navigation",
+            "pages": [
+              "navigation/overview",
+              "navigation/gps-imu-sensors",
+              "navigation/sensor-noise-filtering",
+              "navigation/path-planning"
+            ]
+          },
+          {
+            "group": "Crop-Weed Classification",
+            "pages": [
+              "classification/overview",
+              "classification/datasets",
+              "classification/model-architectures",
+              "classification/training",
+              "classification/inference"
+            ]
+          },
+          {
+            "group": "ROS Packages",
+            "pages": [
+              "ros/workspace-structure",
+              "ros/agribot-description",
+              "ros/agribot-control",
+              "ros/autonomous-drive"
+            ]
+          }
+        ]
+      }
+    ]
+  },
+  "keyFeatures": [
+    "Autonomous GPS + magnetometer-guided field navigation with skid-steer drive control",
+    "Moving Median and Kalman filter for sensor noise reduction",
+    "Bonnet CNN architecture for real-time pixel-level crop-weed segmentation",
+    "Full Gazebo simulation with farm field world, textured crop models, and sensor plugins",
+    "URDF/Xacro robot model with IMU, GPS, camera, and skid-steer plugins",
+    "Dual dataset support: CWFID and BoniRob (Bonn sugar-beets) datasets",
+    "Real-time webcam/video inference pipeline at ~2.5 fps on embedded GPU hardware",
+    "ROS action-based waypoint patrol and move_base integration"
+  ],
+  "publicApiSurface": [
+    "autonomus_drive.py — GPSAlgoV1() PD controller, ROS node 'autonomousdrive', topics: /agribot/cmd_vel, /angle, /distance",
+    "GPS_data_conversion.py — ll2xy(), xy2ll(), mdeglat(), mdeglon(), LLtoUTM(), UTMtoLL(), ROS node 'gps_converter', topics: /agribot/fix, /distance, /currentPose",
+    "data_manipulation.py — medianFilter(), angle_to_move(), ROS node 'data_manipulation', topics: /magnetic, /currentPose, Filteredheading, angle",
+    "AutonomusDriveAction.py — goal_pose(), ROS node 'patrol', move_base action client with waypoints list",
+    "model.py — small_Unet(labels, h, w, out_activation), bonnet(labels, h, w)",
+    "predict.py — predict(img) CLI: -i input_dir, -m model_weights, -r predictions_dir",
+    "real-time.py — realtime(src, modelweightspath) CLI: -v video, -m modelweights",
+    "pre-process.py — dataset preprocessing for CWFID and BoniRob",
+    "agribot_gazebo_simulation.launch — spawns AGRIBOT URDF into Gazebo with farm world",
+    "agribot_control.yaml — PID effort controllers for 4-wheel skid-steer joints",
+    "agribot_sensors.urdf.xacro — Gazebo plugins: skid_steer_drive, IMU (hector), GPS (hector), magnetometer"
+  ]
+}

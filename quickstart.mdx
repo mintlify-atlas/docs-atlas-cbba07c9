@@ -1,47 +1,115 @@
 ---
-title: "Quickstart"
-description: "Begin with a guide on the fastest path to a successful outcome"
+title: "Get Started with AGRIBOT in Gazebo Simulation"
+sidebarTitle: "Quickstart"
+description: "Launch AGRIBOT in a Gazebo farm world, spawn the robot model, and run the autonomous navigation stack in under 10 minutes."
 ---
 
-Describe how someone begins using your product. What is the first thing they need to do? Are there any prerequisites?
+This quickstart walks through launching the full AGRIBOT simulation — spawning the robot in a farm world, starting the ROS controller stack, and running the GPS-guided autonomous drive nodes. By the end you will have AGRIBOT navigating autonomously toward a GPS goal coordinate inside a simulated farm field, with its trajectory visible in Mapviz.
 
-A quickstart should take someone from zero to using your product. They'll get a quick win and a sense of what they can accomplish.
+<Note>
+  **Prerequisites before you begin:**
+  - ROS Melodic (Ubuntu 18.04) or ROS Kinetic (Ubuntu 16.04)
+  - Gazebo 9 or later
+  - Python 3.6 or later
+  - A configured catkin workspace (created during installation)
 
-## Prerequisites
-
-Before you begin, you must have:
-
-- Requirement one (for example, Node.js 18+, a free account, an API key)
-- Requirement two (for example, a compatible device, a compatible browser, a compatible operating system)
-
-## Get started
+  Complete the [Installation](/installation) guide first if you have not already set up your environment.
+</Note>
 
 <Steps>
-  <Step title="Install">
-    Describe how to install your product or sign up.
+  <Step title="Clone and build the workspace">
+    Clone the AGRIBOT repository and build the catkin workspace. The `catkin_make` step compiles all ROS packages — `agribot_description`, `agribot_control`, and `autonomous_drive` — in a single pass.
 
     ```bash
-    npm install your-package
+    git clone https://github.com/Dhruv2012/Autonomous-Farm-Robot.git
+    cd Autonomous-Farm-Robot/agribot_ws
+    catkin_make
+    source devel/setup.bash
     ```
   </Step>
-  <Step title="Configure">
-    Describe any setup or configuration needed before first use.
+
+  <Step title="Launch Gazebo with the farm world">
+    Spawn AGRIBOT into a Gazebo simulation. Use `agribot_gazebo_simulation.launch` to start with an empty world, or `my_world.launch` to load the full farm field environment (recommended).
 
     ```bash
-    your-cli init
+    roslaunch agribot_description agribot_gazebo_simulation.launch
+    ```
+
+    This launch file spawns the AGRIBOT URDF model (`agribot_sensors.urdf.xacro`) into an empty Gazebo world and publishes a static transform between `base_link` and `base_footprint`. To use the custom farm field world with `CropWithWeed` models, grass terrain, and a gate instead, run:
+
+    ```bash
+    roslaunch agribot_description my_world.launch
+    ```
+
+    `my_world.launch` loads `Farm.world`, starts `joint_state_publisher` and `robot_state_publisher`, and automatically includes `agribot_control.launch` so you do not need to start the controllers separately.
+  </Step>
+
+  <Step title="Start the ROS controllers">
+    Open a new terminal and start the effort controllers for all four wheels. These PID controllers (`rightwheelR_effort_controller`, `leftwheelR_effort_controller`, `rightwheelF_effort_controller`, `leftwheelF_effort_controller`) are required for the autonomous drive node to issue velocity commands.
+
+    ```bash
+    source devel/setup.bash
+    roslaunch agribot_control agribot_control.launch
+    ```
+
+    <Note>
+      Skip this step if you launched `my_world.launch` in the previous step — it already includes `agribot_control.launch`.
+    </Note>
+  </Step>
+
+  <Step title="Launch the GPS converter node">
+    Open a new terminal and start the GPS data conversion node. This node reads the simulated GPS fix topic, converts raw GPS coordinates into a local Cartesian frame, and prompts you to enter a goal position.
+
+    ```bash
+    source devel/setup.bash
+    rosrun autonomous_drive GPS_data_conversion.py
+    ```
+
+    When prompted, enter the **latitude** and **longitude** of your navigation goal. The node will compute the bearing and distance from the robot's current GPS position to the goal.
+  </Step>
+
+  <Step title="Launch the data manipulation node">
+    Open a new terminal and start the sensor data manipulation node. This node applies a Moving Median filter and a single-dimension Kalman filter to reduce GPS and magnetometer noise before passing heading corrections to the drive controller.
+
+    ```bash
+    source devel/setup.bash
+    rosrun autonomous_drive data_manipulation.py
     ```
   </Step>
-  <Step title="Run it">
-    Show the first thing a user does to see it working.
+
+  <Step title="Launch the autonomous drive node">
+    Open a new terminal and start the autonomous drive node. AGRIBOT will now use the filtered GPS bearing data to navigate toward the goal coordinates you entered.
 
     ```bash
-    your-cli start
+    source devel/setup.bash
+    rosrun autonomous_drive autonomus_drive.py
     ```
+
+    The robot drives forward along the computed heading, correcting its course using the magnetometer and GPS feedback loop. Watch Gazebo to observe AGRIBOT moving through the farm rows.
   </Step>
 </Steps>
 
 <Tip>
-  Give people a way to get help. This could be a link to a support page, a chat with a customer support agent, or a forum for your product.
+  For waypoint patrol mode — where AGRIBOT visits a sequence of GPS waypoints — use the ROS `move_base` action server integration instead:
 
-  Example: Need help? Reach out to us at [support@yourcompany.com](mailto:support@yourcompany.com).
+  ```bash
+  rosrun autonomous_drive AutonomusDriveAction.py
+  ```
+
+  This node sends goal poses to the `move_base` action server, enabling multi-waypoint autonomous traversal of the field.
 </Tip>
+
+## Visualizing in Mapviz
+
+Mapviz is a ROS visualization tool that renders the robot's GPS trace on a map canvas. Launch it in a separate terminal:
+
+```bash
+roslaunch mapviz mapviz.launch
+```
+
+Once open, Mapviz displays two overlays derived from the `autonomous_drive` nodes:
+
+- **Green points** — the endpoints of each crop row in the field, used as intermediate waypoints.
+- **Blue line** — the continuous GPS trajectory traced by AGRIBOT as it navigates.
+
+The camera image stream from `/agribot/camera/image_raw` can also be fed directly into the Bonnet CNN classification model for real-time crop-weed segmentation alongside navigation.

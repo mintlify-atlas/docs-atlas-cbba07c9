@@ -1,0 +1,119 @@
+---
+title: "Running Crop-Weed Inference: Batch and Real-Time Modes"
+sidebarTitle: "Inference"
+description: "Run Bonnet weed segmentation on image directories with predict.py or stream real-time video through real-time.py at ~2.5 fps with webcam or video file input."
+---
+
+AGRIBOT provides two inference entry points — `predict.py` for batch processing directories of images, and `real-time.py` for live webcam or video file segmentation. Both scripts load the Bonnet model at 512 × 384 resolution with a 10-channel multi-spectral input and produce colour-coded segmentation masks where red pixels are weed, green pixels are crop, and blue pixels are soil.
+
+## Batch Image Prediction (`predict.py`)
+
+`predict.py` iterates over every `.jpg` and `.jpeg` file in a directory, runs the Bonnet model on each image, and writes the prediction mask plus a three-panel comparison figure to an output directory.
+
+```bash
+python3 predict.py \
+  --input_dir /path/to/images \
+  --model_weights /path/to/weights.h5 \
+  --predictions_dir /path/to/output
+```
+
+### Arguments
+
+| Flag | Default | Description |
+|---|---|---|
+| `-i` / `--input_dir` | `../../../Datasets/real-images(modified)` | Directory containing `.jpg` or `.jpeg` images to segment |
+| `-m` / `--model_weights` | Path to `v3.h5` in trained models directory | Path to the trained Bonnet `.h5` weights file |
+| `-r` / `--predictions_dir` | Path to `real-images-predictions` directory | Output directory for prediction PNGs and comparison figures |
+
+The output directory is created automatically if it does not exist.
+
+### What `predict()` does
+
+For each image file the script calls `predict(img)` which performs the following steps:
+
+1. Instantiates the Bonnet model via `load_bonnet(3, 512, 384)` and loads the weights.
+2. Converts the image to a 10-channel multi-spectral array using `multichannel_input()` from `utils.py`.
+3. Expands the array to a batch of 1 with `np.expand_dims`.
+4. Calls `seg_model.predict(input)` → takes `argmax` across the class axis → converts to one-hot with `to_categorical(prediction, 3)`.
+5. Reshapes the prediction to `(512, 384, 3)`.
+6. Saves the binary mask as a PNG (`predictions_dir/<filename>`).
+7. Saves a three-panel Matplotlib figure — **input | class-wise soft prediction | hard prediction** — as `<basename>-prediction.png`.
+
+<Note>
+  The model is reloaded for every image in the loop. For large batches, consider refactoring `predict()` to load the model once before the loop.
+</Note>
+
+## Real-Time Inference (`real-time.py`)
+
+`real-time.py` streams frames from a webcam or video file, runs the Bonnet model on each resized frame, and displays the prediction mask in a live OpenCV window.
+
+```bash
+# Webcam (real-time, camera port 0)
+python3 real-time.py --modelweights /path/to/weights.h5
+
+# Video file
+python3 real-time.py \
+  --video /path/to/video.mkv \
+  --modelweights /path/to/weights.h5
+```
+
+### Arguments
+
+| Flag | Default | Description |
+|---|---|---|
+| `-v` / `--video` | Not set (uses webcam) | Path to input video file. If omitted, the webcam at camera port 0 is used |
+| `-m` / `--modelweights` | Path to `v3.h5` | Path to trained Bonnet `.h5` weights file |
+
+### Frame processing pipeline
+
+The core inference loop inside `realtime()` processes one frame at a time:
+
+```python
+frame = cap.read()                                    # Read frame (BGR)
+frame = cv2.resize(frame, (w, h))                     # Resize to 384 × 512
+
+ip = load_input(frame, h, w)                          # Convert BGR → 10-channel
+IP = np.array([ip])                                   # Add batch dimension
+
+pred = seg_model.predict(IP)                          # (1, h*w, 3) soft probabilities
+prediction = pred.argmax(axis=-1)                     # (1, h*w) class indices
+prediction = to_categorical(prediction, 3)            # (1, h*w, 3) one-hot
+prediction = np.reshape(prediction, (h, w, 3))        # (512, 384, 3)
+prediction = prediction[:, :, [2, 1, 0]]              # RGB → BGR for OpenCV
+
+cv2.imshow('Output', prediction)                      # Display result
+```
+
+`load_input()` mirrors `multichannel_input()` from `utils.py` but accepts a raw BGR NumPy array (from `cv2.resize`) rather than an image file path. It converts the frame to RGB, computes the seven vegetation index and HSV channels, and normalises channels 0–2 to 0–1.
+
+Press **`Esc`** (key code 27) to exit the real-time window.
+
+## Output Colour Mapping
+
+The one-hot prediction tensor maps directly to an RGB image where each channel activates one class. OpenCV then converts RGB to BGR for display.
+
+| Class | Label | Channel | Colour in Output |
+|---|---|---|---|
+| Weed | 0 | Channel 0 (R) | Red |
+| Crop | 1 | Channel 1 (G) | Green |
+| Soil | 2 | Channel 2 (B) | Blue |
+
+## Performance
+
+Real-time throughput was measured using `imutils.video.FPS` on the hardware below.
+
+| Component | Specification |
+|---|---|
+| CPU | Intel Core i7 8th Gen |
+| GPU | 4 GB NVIDIA GeForce 940 MX |
+| Average inference speed | ~2.5 fps |
+
+Two `imutils` utilities reduce system-level overhead in the real-time loop:
+
+- **`WebcamVideoStream`** — runs frame capture on a separate thread so the main inference loop is never blocked waiting for the camera I/O.
+- **`FileVideoStream`** — the equivalent threaded reader for video files.
+- **`FPS`** — accumulates frame timestamps and reports the true average frame rate at the end of the session via `fps.fps()`.
+
+<Tip>
+  For Jetson Nano deployment, convert the Keras model to TensorRT using `tf2onnx` + TensorRT, or use NVIDIA's `tftrt` module to achieve 5–10× inference speedup over the standard TensorFlow runtime.
+</Tip>

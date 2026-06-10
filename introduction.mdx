@@ -1,0 +1,82 @@
+---
+title: "AGRIBOT: Open-Source Autonomous Agricultural Robot"
+sidebarTitle: "Introduction"
+description: "AGRIBOT is a ROS-based autonomous farm robot that uses GPS/IMU navigation and CNN-based crop-weed segmentation to remove weeds without human involvement."
+---
+
+AGRIBOT is an open-source autonomous agricultural robot designed to eliminate weeds on a real-time basis without any human involvement. Built as an undergraduate project at the Sardar Vallabhbhai National Institute of Technology (SVNIT) under the guidance of TEQIP-3 and the ECE Department, AGRIBOT combines mechanical design, embedded systems, robotic simulation, and deep learning into a single end-to-end system. By automating weed removal, AGRIBOT aims to reduce dependency on manual labor, improve crop yield quality, and offer a scalable platform that can be extended to other farming tasks such as ploughing and harvesting — ultimately contributing to agricultural GDP and farmer welfare.
+
+## What AGRIBOT Does
+
+AGRIBOT is built around two core technical pillars that work in tandem: **Autonomous Navigation** and **Crop-Weed Classification**. The navigation subsystem drives the robot through crop rows using GPS and magnetometer data fused with Kalman filtering, while the classification subsystem uses a convolutional neural network to segment every camera frame into crop, weed, and soil regions — triggering targeted weed removal without disturbing surrounding plants.
+
+<CardGroup cols={2}>
+  <Card title="Autonomous Navigation" icon="map-location-dot" href="/navigation/overview">
+    GPS + IMU-guided path planning with Moving Median and Kalman filters for noise reduction. Implements skid-steer drive control in Gazebo simulation.
+  </Card>
+  <Card title="Crop-Weed Classification" icon="seedling" href="/classification/overview">
+    CNN-based semantic segmentation using UNet and Bonnet architectures trained on the CWFID and Bonn sugar-beet datasets. Bonnet runs at ~2.5 fps for real-time inference.
+  </Card>
+  <Card title="System Architecture" icon="diagram-project" href="/architecture">
+    Modular ROS Catkin workspace with four packages: robot description (URDF), controllers, autonomous drive nodes, and Gazebo simulation worlds.
+  </Card>
+  <Card title="Quickstart" icon="rocket" href="/quickstart">
+    Set up the ROS workspace, launch the Gazebo simulation, and run the navigation stack and classification pipeline from scratch.
+  </Card>
+</CardGroup>
+
+<Note>
+  AGRIBOT was developed and tested primarily in Gazebo simulation due to restrictions imposed by the COVID-19 pandemic, which prevented full deployment on the physical robot. However, the navigation algorithms are validated in simulation with realistic sensor noise, and the crop-weed classification models are validated directly on real farm images captured from sugarbeet fields and surrounding farms near SVNIT.
+</Note>
+
+## Published Research
+
+AGRIBOT's design and algorithms are documented in a peer-reviewed paper presented at the **AVES 2021 Conference** and subsequently published by Springer:
+
+**"Design of an Autonomous Agriculture Robot for Real Time Weed Detection using CNN"**
+Dhruv Patel, Meet Gandhi, Shankaranarayanan H., and Anand Darji.
+[arXiv:2211.12077](https://arxiv.org/abs/2211.12077) · [Springer Chapter](https://link.springer.com/chapter/10.1007/978-981-19-6780-1_13)
+
+The paper covers the full system design, including embedded and mechanical architecture, URDF-based robot modeling and Gazebo simulation, GPS/magnetometer path planning, and deep learning crop-weed classification results on both the CWFID and Bonn datasets.
+
+### Cite This Work
+
+If you use AGRIBOT's code, models, or methodology, please cite the paper using the following BibTeX entry:
+
+```bibtex
+@misc{https://doi.org/10.48550/arxiv.2211.12077,
+  doi = {10.48550/ARXIV.2211.12077},
+  url = {https://arxiv.org/abs/2211.12077},
+  author = {Patel, Dhruv and Gandhi, Meet and H., Shankaranarayanan and Darji, Anand D.},
+  title = {Design of an Autonomous Agriculture Robot for Real Time Weed Detection using CNN},
+  publisher = {arXiv},
+  year = {2022},
+  copyright = {Creative Commons Attribution 4.0 International}
+}
+```
+
+## Project Team
+
+AGRIBOT was conceived, designed, and built by a team of undergraduate students and their faculty guide at SVNIT Surat.
+
+<CardGroup cols={2}>
+  <Card title="Dr. Anand Darji" icon="chalkboard-user">
+    **Project Guide** — Head & Associate Professor, Electronics & Communication Engineering Department, SVNIT.
+  </Card>
+  <Card title="Development Team" icon="users">
+    **Dhruv Patel** (U16EC053), **Meet Gandhi** (U16EC056), **Shankaranarayanan H.** (U16EC074) — all from SVNIT, Surat.
+  </Card>
+</CardGroup>
+
+<Tip>
+  Special thanks to **Mr. Mahesh Birajdar (U16ME084)** and **Team DRISHTI** at SVNIT for their contributions to the SolidWorks design and physical manufacturing of the AGRIBOT chassis.
+</Tip>
+
+## Key Capabilities at a Glance
+
+- **GPS + Magnetometer Navigation** — waypoint following using Mercator projection coordinate conversion and `atan2`-based heading computation
+- **Sensor Noise Reduction** — Moving Median filter and single-dimension Kalman filter applied to heading data from the MPU-9265 magnetometer
+- **Semantic Segmentation** — Bonnet CNN architecture with ~100× fewer parameters than UNet, enabling real-time inference on an Nvidia Jetson Nano
+- **Dual Dataset Validation** — trained and evaluated on [CWFID](https://github.com/cwfid/dataset) and [Bonn Sugar-Beet 2016](https://www.ipb.uni-bonn.de/data/sugarbeets2016/) datasets
+- **Full Gazebo Simulation** — complete sensor suite (GPS, IMU, magnetometer, camera) simulated with realistic Gaussian noise and drift parameters
+- **Open Source** — all ROS packages, CNN training scripts, URDF models, and dataset tools are publicly available on GitHub

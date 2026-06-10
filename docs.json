@@ -1,72 +1,79 @@
 {
   "$schema": "https://mintlify.com/docs.json",
-  "theme": "mint",
-  "name": "Mintlify Starter Kit",
+  "name": "AGRIBOT — Autonomous Farm Robot",
+  "theme": "aspen",
   "colors": {
-    "primary": "#16A34A",
-    "light": "#07C983",
-    "dark": "#15803D"
+    "primary": "#912d37",
+    "light": "#776f67",
+    "dark": "#d3cfcc"
   },
-  "favicon": "/favicon.svg",
-  "navigation": {
-    "pages": [
-      {
-        "group": "Getting Started",
-        "pages": [
-          "index",
-          "quickstart"
-        ]
-      }
-    ],
-    "global": {
-      "anchors": [
-        {
-          "anchor": "Documentation",
-          "href": "https://mintlify.com/docs",
-          "icon": "book-open-cover"
-        },
-        {
-          "anchor": "Blog",
-          "href": "https://mintlify.com/blog",
-          "icon": "newspaper"
-        }
-      ]
-    }
-  },
+  "favicon": "https://media.brand.dev/a9c233d9-1c9d-41a0-a4b7-80871208abd3.jpg",
   "logo": {
-    "light": "/logo/light.svg",
-    "dark": "/logo/dark.svg"
+    "light": "https://media.brand.dev/ece49174-2a20-4c7b-9c29-816ee7fb7208.svg",
+    "dark": "https://media.brand.dev/ece49174-2a20-4c7b-9c29-816ee7fb7208.svg"
   },
   "navbar": {
-    "links": [
-      {
-        "label": "Support",
-        "href": "mailto:hi@mintlify.com"
-      }
-    ],
     "primary": {
-      "type": "button",
-      "label": "Dashboard",
-      "href": "https://app.mintlify.com"
+      "type": "github",
+      "href": "https://github.com/Dhruv2012/Autonomous-Farm-Robot"
     }
-  },
-  "contextual": {
-    "options": [
-      "copy",
-      "view",
-      "chatgpt",
-      "claude",
-      "perplexity",
-      "mcp",
-      "cursor",
-      "vscode"
-    ]
   },
   "footer": {
     "socials": {
-      "x": "https://x.com/mintlify",
-      "github": "https://github.com/mintlify",
-      "linkedin": "https://linkedin.com/company/mintlify"
+      "github": "https://github.com/Dhruv2012/Autonomous-Farm-Robot"
     }
+  },
+  "navigation": {
+    "tabs": [
+      {
+        "tab": "Documentation",
+        "groups": [
+          {
+            "group": "Overview",
+            "pages": [
+              "introduction",
+              "architecture",
+              "hardware"
+            ]
+          },
+          {
+            "group": "Getting Started",
+            "pages": [
+              "quickstart",
+              "installation",
+              "simulation"
+            ]
+          },
+          {
+            "group": "Autonomous Navigation",
+            "pages": [
+              "navigation/overview",
+              "navigation/gps-imu-sensors",
+              "navigation/sensor-noise-filtering",
+              "navigation/path-planning"
+            ]
+          },
+          {
+            "group": "Crop-Weed Classification",
+            "pages": [
+              "classification/overview",
+              "classification/datasets",
+              "classification/model-architectures",
+              "classification/training",
+              "classification/inference"
+            ]
+          },
+          {
+            "group": "ROS Packages",
+            "pages": [
+              "ros/workspace-structure",
+              "ros/agribot-description",
+              "ros/agribot-control",
+              "ros/autonomous-drive"
+            ]
+          }
+        ]
+      }
+    ]
   }
 }
