@@ -1,7 +1,7 @@
 ---
-title: "Training the Crop-Weed Segmentation Model"
+title: "Training AGRIBOT Crop-Weed Segmentation with main.py"
 sidebarTitle: "Training"
-description: "Train Bonnet or UNet on CWFID or BoniRob datasets using main.py. Configure dataset paths, batch size, epochs, and weighted categorical cross-entropy loss."
+description: "Train Bonnet or UNet on CWFID or BoniRob datasets via main.py. Configure paths, batch size, epochs, and weighted categorical cross-entropy loss."
 ---
 
 Model training is orchestrated by `main.py`, which selects the model architecture and dataset, builds data generators, configures callbacks, and runs training with weighted categorical cross-entropy loss to handle class imbalance between weed, crop, and soil pixels. The script also supports reloading pre-trained weights to resume training or perform evaluation without restarting from scratch.
@@ -73,12 +73,12 @@ seg_model.compile(
     metrics=[
         'accuracy',
         iou_coef,
-        keras_metrics.categorical_precision(label=0),   # Weed precision
-        keras_metrics.categorical_recall(label=0),      # Weed recall
-        keras_metrics.categorical_precision(label=1),   # Crop precision
-        keras_metrics.categorical_recall(label=1),      # Crop recall
-        keras_metrics.categorical_precision(label=2),   # Soil precision
-        keras_metrics.categorical_recall(label=2),      # Soil recall
+        keras_metrics.categorical_precision(label=0),
+        keras_metrics.categorical_recall(label=0),
+        keras_metrics.categorical_precision(label=1),
+        keras_metrics.categorical_recall(label=1),
+        keras_metrics.categorical_precision(label=2),
+        keras_metrics.categorical_recall(label=2),
     ]
 )
 ```
@@ -147,10 +147,10 @@ To evaluate an already-trained model without re-running training, keep `reload_w
 ```
 Loss: 0.xxxx
 Mean Accuracy: 0.xxxx
-Mean IoU: 0.xxxx
-Precision (label 0 - Weed): 0.xx   Recall (label 0 - Weed): 0.xx
-Precision (label 1 - Crop): 0.xx   Recall (label 1 - Crop): 0.xx
-Precision (label 2 - Soil): 0.xx   Recall (label 2 - Soil): 0.xx
+Mean iou 0.xxxx
+Precision (label 0): 0.xx Recall (label 0): 0.xx
+Precision (label 1): 0.xx Recall (label 1): 0.xx
+Precision (label 2): 0.xx Recall (label 2): 0.xx
 ```
 
 The full numeric results for the published Bonnet model are available in `Documents/readme-images/bonnet-metrics.png`.

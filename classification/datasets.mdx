@@ -1,7 +1,7 @@
 ---
-title: "CWFID and BoniRob Datasets for Crop-Weed Training"
+title: "CWFID and BoniRob Datasets for Weed Classification"
 sidebarTitle: "Datasets"
-description: "AGRIBOT trains on two public datasets: CWFID (carrot/weed images) and the BoniRob sugar beet dataset from the University of Bonn with multi-spectral inputs."
+description: "AGRIBOT trains on CWFID (carrot/weed images) and BoniRob sugar beet dataset from the University of Bonn using 10-channel multi-spectral inputs."
 ---
 
 Two public agricultural datasets were used to train and evaluate AGRIBOT's classification models — CWFID for initial validation and the BoniRob sugar beet dataset from the Photogrammetry & Robotics Lab at the University of Bonn for final model selection. Each dataset feeds a different preprocessing pipeline and input resolution, so it is important to understand their differences before running `main.py`.
@@ -15,14 +15,14 @@ CWFID contains annotated RGB images of carrot crops growing alongside weed, capt
 | Property | Value |
 |---|---|
 | Crop type | Carrot |
-| Input resolution | 128 × 128 pixels |
+| Input resolution | 128 × 128 (UNet) or 512 × 384 (Bonnet) — set by `h`/`w` in `main.py` |
 | Annotation format | PNG masks (per-pixel class labels) |
 | Split definition | `train_test_split.yaml` |
 | Image directory | `images/` |
 | Annotation directory | `annotations/` |
 | URL | [https://github.com/cwfid/dataset](https://github.com/cwfid/dataset) |
 
-The YAML split file maps numeric sample indices to `train` and `test` lists. The `load_cwfid_withyaml()` helper in `utils.py` reads this file and assembles `x_train`, `y_train`, `x_test`, `y_test` arrays automatically.
+The YAML split file maps numeric sample indices to `train` and `test` lists. The `load_cwfid_withyaml()` helper in `utils.py` reads this file and assembles `x_train`, `y_train`, `x_test`, `y_test` arrays automatically. The resolution passed to this helper is determined by the model selected (`h = 128, w = 128` for UNet; `h = 512, w = 384` for Bonnet) not by a fixed CWFID property.
 
 ## BoniRob Dataset (Bonn Sugar Beets)
 
@@ -54,29 +54,37 @@ The preprocessed dataset is then split into train, validation, and test subsets 
 
 Plain RGB is insufficient to reliably distinguish green weed from green crop in field conditions. AGRIBOT extends the three RGB channels with seven additional channels — computed vegetation indices and HSV colour-space components — to give the Bonnet model richer spectral information.
 
-The channel construction is implemented in `multichannel_input()` in `utils.py` and mirrored by `load_input()` in `real-time.py`:
+The channel construction is implemented in `multichannel_input()` in `utils.py` and mirrored by `load_input()` in `real-time.py`. In both functions the image is first in RGB order (channels 0=R, 1=G, 2=B), and the indices below use the same convention:
 
 ```python
-# Channel construction for BoniRob (from utils.py / real-time.py)
-# Channels 0-2: normalized RGB (R, G, B) divided by 255
+# Channel construction (from utils.py / real-time.py)
+# Input img is in RGB order: img[:,:,0]=R, img[:,:,1]=G, img[:,:,2]=B
 
-img[:, :, 3] = (2*G - R - B) / 255           # ExG  – Excess Green Index
-img[:, :, 4] = (1.4*R - G) / 255              # ExR  – Excess Red Index
-img[:, :, 5] = (0.881*G - 0.441*R - 0.385*B - 18.78745) / 255  # CIVE – Colour Index of Vegetation Extraction
-img[:, :, 6] = (G - R) / (G + R)              # NDI  – Normalised Difference Index
-img[:, :, 7] = hsv[:, :, 0] / 360             # Hue  (from HSV)
-img[:, :, 8] = hsv[:, :, 1]                   # Saturation (from HSV)
-img[:, :, 9] = hsv[:, :, 2] / 255             # Value (from HSV)
+# Channels 0–2: normalized RGB (divided by 255 after vegetation index computation)
+img[:,:,3] = (2*img[:,:,1] - img[:,:,0] - img[:,:,2])/255           # ExG
+img[:,:,4] = (1.4*img[:,:,0] - img[:,:,1])/255                      # ExR
+img[:,:,5] = (0.881*img[:,:,1] - 0.441*img[:,:,0] - 0.385*img[:,:,2] - 18.78745)/255  # CIVE
+img[:,:,6] = (img[:,:,1] - img[:,:,0])/(img[:,:,1] + img[:,:,0])   # NDI
+img[:,:,7] = hsv[:,:,0]/360                                          # Hue (from HSV)
+img[:,:,8] = hsv[:,:,1]                                              # Saturation (from HSV)
+img[:,:,9] = hsv[:,:,2]/255                                          # Value (from HSV)
+
+# Normalize RGB channels last
+img[:,:,0] = img[:,:,0]/255
+img[:,:,1] = img[:,:,1]/255
+img[:,:,2] = img[:,:,2]/255
 ```
+
+In `real-time.py` the input frame arrives as BGR (from OpenCV) and is converted to RGB via `frame[:,:,[2, 1, 0]]` before the vegetation index computation, so the same channel indexing applies.
 
 | Channel | Name | Formula |
 |---|---|---|
 | 0 | Red (normalised) | `R / 255` |
 | 1 | Green (normalised) | `G / 255` |
 | 2 | Blue (normalised) | `B / 255` |
-| 3 | ExG | `(2G − R − B) / 255` |
-| 4 | ExR | `(1.4R − G) / 255` |
-| 5 | CIVE | `(0.881G − 0.441R − 0.385B − 18.79) / 255` |
+| 3 | ExG | `(2·G − R − B) / 255` |
+| 4 | ExR | `(1.4·R − G) / 255` |
+| 5 | CIVE | `(0.881·G − 0.441·R − 0.385·B − 18.78745) / 255` |
 | 6 | NDI | `(G − R) / (G + R)` |
 | 7 | Hue | `H / 360` |
 | 8 | Saturation | `S` (0–1 range from OpenCV HSV) |

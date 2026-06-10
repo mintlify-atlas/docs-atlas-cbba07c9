@@ -71,11 +71,11 @@ The table below explains what each package provides in the AGRIBOT stack:
 The crop-weed classification pipeline uses a Bonnet CNN architecture trained on the CWFID and Bonn sugar beet datasets. Install all Python dependencies with `pip3`:
 
 ```bash
-pip3 install tensorflow==1.x keras numpy matplotlib opencv-python scikit-learn scikit-image Pillow imutils keras-metrics
+pip3 install tensorflow==1.14 keras numpy matplotlib opencv-python scikit-learn scikit-image Pillow imutils keras-metrics
 ```
 
 <Note>
-  The classification code in `Crop_Weed_Classification/model.py` was written for **TensorFlow 1.x and Keras 2.x**. Upgrading to TensorFlow 2.x will introduce breaking API changes — particularly around `keras.backend`, session handling, and model loading. Test compatibility thoroughly before upgrading your environment.
+  The classification code in `Crop_Weed_Classification/model.py` was written for **TensorFlow 1.x and Keras 2.x**. The pip-installable version that matches the original development environment is `tensorflow==1.14`. Upgrading to TensorFlow 2.x will introduce breaking API changes — particularly around `keras.backend`, session handling, and model loading. Test compatibility thoroughly before upgrading your environment.
 </Note>
 
 ## Build the Catkin Workspace

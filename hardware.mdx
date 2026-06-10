@@ -31,11 +31,11 @@ AGRIBOT's physical form is a four-wheel skid-steer chassis designed in SolidWork
 
 The physical MPU-9265 is read by an Arduino microcontroller running `imudata.ino`, located at `agribot_ws/src/imudata/imudata.ino`. The sketch initializes the MPU via I²C, reads all 14 accelerometer and gyroscope registers at address `0x68`, encodes the values into a compact string format, and publishes them as a ROS topic using `ros_lib`. The encoding format is:
 
-```
+```text
 A{AcX}B{AcY}C{AcZ}D{GyX}E{GyY}F{GyZ}G
 ```
 
-Below is the core read loop from the sketch:
+Below is the complete sketch from the source:
 
 ```cpp
 #include <ros.h>
@@ -45,31 +45,51 @@ Below is the core read loop from the sketch:
 const int MPU_addr = 0x68;  // I2C address of the MPU-9265
 int16_t AcX, AcY, AcZ, Tmp, GyX, GyY, GyZ;
 
+// Set up the ros node and publisher
 std_msgs::String imu_msg;
 ros::Publisher imu("imu", &imu_msg);
 ros::NodeHandle nh;
 
+void setup() {
+  nh.initNode();
+  nh.advertise(imu);
+
+  Wire.begin();
+  Wire.beginTransmission(MPU_addr);
+  Wire.write(0x6B);  // PWR_MGMT_1 register
+  Wire.write(0);     // set to zero (wakes up the MPU-9265)
+  Wire.endTransmission(true);
+  Serial.begin(57600);
+}
+
+long publisher_timer;
+
 void loop() {
   Wire.beginTransmission(MPU_addr);
-  Wire.write(0x3B);  // ACCEL_XOUT_H register
+  Wire.write(0x3B);  // starting with register 0x3B (ACCEL_XOUT_H)
   Wire.endTransmission(false);
-  Wire.requestFrom(MPU_addr, 14, true);
+  Wire.requestFrom(MPU_addr, 14, true);  // request a total of 14 registers
 
-  AcX = Wire.read() << 8 | Wire.read();  // 0x3B–0x3C
-  AcY = Wire.read() << 8 | Wire.read();  // 0x3D–0x3E
-  AcZ = Wire.read() << 8 | Wire.read();  // 0x3F–0x40
-  Tmp = Wire.read() << 8 | Wire.read();  // 0x41–0x42 (temperature, unused)
-  GyX = Wire.read() << 8 | Wire.read();  // 0x43–0x44
-  GyY = Wire.read() << 8 | Wire.read();  // 0x45–0x46
-  GyZ = Wire.read() << 8 | Wire.read();  // 0x47–0x48
+  AcX = Wire.read() << 8 | Wire.read();  // 0x3B (ACCEL_XOUT_H) & 0x3C (ACCEL_XOUT_L)
+  AcY = Wire.read() << 8 | Wire.read();  // 0x3D (ACCEL_YOUT_H) & 0x3E (ACCEL_YOUT_L)
+  AcZ = Wire.read() << 8 | Wire.read();  // 0x3F (ACCEL_ZOUT_H) & 0x40 (ACCEL_ZOUT_L)
+  Tmp = Wire.read() << 8 | Wire.read();  // 0x41 (TEMP_OUT_H)   & 0x42 (TEMP_OUT_L)
+  GyX = Wire.read() << 8 | Wire.read();  // 0x43 (GYRO_XOUT_H)  & 0x44 (GYRO_XOUT_L)
+  GyY = Wire.read() << 8 | Wire.read();  // 0x45 (GYRO_YOUT_H)  & 0x46 (GYRO_YOUT_L)
+  GyZ = Wire.read() << 8 | Wire.read();  // 0x47 (GYRO_ZOUT_H)  & 0x48 (GYRO_ZOUT_L)
 
   String data = "A" + String(AcX) + "B" + String(AcY) + "C" + String(AcZ)
               + "D" + String(GyX) + "E" + String(GyY) + "F" + String(GyZ) + "G";
+  Serial.println(data);
+
+  int length = data.indexOf("G") + 2;
+  char data_final[length + 1];
+  data.toCharArray(data_final, length + 1);
 
   if (millis() > publisher_timer) {
     imu_msg.data = data_final;
     imu.publish(&imu_msg);
-    publisher_timer = millis() + 100;  // 10 Hz
+    publisher_timer = millis() + 100;  // publish ten times a second (10 Hz)
     nh.spinOnce();
   }
 }
@@ -89,14 +109,16 @@ Plugin: `libhector_gazebo_ros_gps.so`
 
 ```xml
 <plugin name="gps_controller" filename="libhector_gazebo_ros_gps.so">
-  <updateRate>5.0</updateRate>
+  <alwayson>true</alwayson>
   <robotNamespace>/agribot</robotNamespace>
+  <updateRate>5.0</updateRate>
   <bodyname>gps_link</bodyname>
   <topicname>fix</topicname>
   <velocitytopicname>fix_velocity</velocitytopicname>
+  <drift>5.0 5.0 5.0</drift>
+  <offset>0 0 0</offset>
   <referenceLatitude>21.1613108102</referenceLatitude>
   <referenceLongitude>72.7869817026</referenceLongitude>
-  <drift>5.0 5.0 5.0</drift>
   <gaussiannoise>0.1 0.1 0.1</gaussiannoise>
   <velocitydrift>0 0 0</velocitydrift>
   <velocitygaussiannoise>0.1 0.1 0.1</velocitygaussiannoise>
@@ -111,14 +133,25 @@ Plugin: `libhector_gazebo_ros_imu.so`
 
 ```xml
 <plugin name="imu" filename="libhector_gazebo_ros_imu.so">
+  <serviceName>/imu/calibrate</serviceName>
   <robotNamespace>/agribot</robotNamespace>
   <updateRate>200.0</updateRate>
   <bodyName>imu_link</bodyName>
+  <frameId>imu_link</frameId>
   <topicName>imu</topicName>
+  <rpyOffset>0 0 0</rpyOffset>
+  <xyzOffset>0 0 0</xyzOffset>
   <gaussianNoise>0.00000001</gaussianNoise>
   <accelOffset>0 0 -9.79999999586</accelOffset>
   <accelDrift>0.00000001 0.00000001 0.00000001</accelDrift>
+  <accelDriftFrequency>0.00000001 0.00000001 0.00000001</accelDriftFrequency>
   <accelGaussianNoise>0.00000001 0.00000001 0.00000001</accelGaussianNoise>
+  <rateDrift>0.0 0.0 0.0</rateDrift>
+  <rateDriftFrequency>0.0 0.0 0.0</rateDriftFrequency>
+  <rateGaussianNoise>0.0 0.0 0.0</rateGaussianNoise>
+  <headingDrift>0.0 0.0 0.0</headingDrift>
+  <headingDriftFrequency>0.0 0.0 0.0</headingDriftFrequency>
+  <headingGaussianNoise>0.0 0.0 0.0</headingGaussianNoise>
 </plugin>
 ```
 
@@ -136,9 +169,11 @@ Plugin: `libhector_gazebo_ros_magnetic.so`
   <topicName>/magnetic</topicName>
   <magnitude>1.0</magnitude>
   <referenceHeading>0.0</referenceHeading>
-  <gaussianNoise>0.1 0.1 0.1</gaussianNoise>
+  <declination>0.0</declination>
+  <offset>0 0 0</offset>
   <drift>0.1 0.1 0.1</drift>
   <driftFrequency>10 10 10</driftFrequency>
+  <gaussianNoise>0.1 0.1 0.1</gaussianNoise>
 </plugin>
 ```
 
@@ -152,15 +187,23 @@ Plugin: `libgazebo_ros_skid_steer_drive.so`
 <plugin name="skid_steer_drive_controller"
         filename="libgazebo_ros_skid_steer_drive.so">
   <updateRate>100.0</updateRate>
+  <robotNamespace>/agribot</robotNamespace>
   <commandTopic>/agribot/cmd_vel</commandTopic>
   <odometryTopic>odom</odometryTopic>
+  <odometryFrame>odom</odometryFrame>
+  <leftFrontJoint>base_link_to_left_wheel_F_joint</leftFrontJoint>
+  <rightFrontJoint>base_link_to_right_wheel_F_joint</rightFrontJoint>
+  <leftRearJoint>base_link_to_left_wheel_R_joint</leftRearJoint>
+  <rightRearJoint>base_link_to_right_wheel_R_joint</rightRearJoint>
   <wheelSeparation>0.65</wheelSeparation>
   <wheelDiameter>0.2</wheelDiameter>
+  <robotBaseFrame>dummy_link</robotBaseFrame>
   <torque>20</torque>
   <broadcastTF>True</broadcastTF>
-  <covariance_x>0.0001</covariance_x>
-  <covariance_y>0.0001</covariance_y>
-  <covariance_yaw>0.01</covariance_yaw>
+  <covariance_x>0.000100</covariance_x>
+  <covariance_y>0.000100</covariance_y>
+  <covariance_z>0.000100</covariance_z>
+  <covariance_yaw>0.0100</covariance_yaw>
 </plugin>
 ```
 
@@ -175,7 +218,7 @@ The following table summarizes every sensor topic published in the AGRIBOT syste
 | GPS | `/agribot/fix` | `sensor_msgs/NavSatFix` | 5 Hz |
 | IMU | `/agribot/imu` | `sensor_msgs/Imu` | 200 Hz |
 | Magnetometer | `/magnetic` | `geometry_msgs/Vector3Stamped` | 5 Hz |
-| Camera | `/agribot/camera/image_raw` | `sensor_msgs/Image` | variable |
+| Camera | `/agribot/camera/image_raw` | `sensor_msgs/Image` | 30 fps |
 | Odometry | `/odom` | `nav_msgs/Odometry` | 100 Hz |
 
 <Tip>

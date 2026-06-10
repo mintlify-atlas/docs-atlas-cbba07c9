@@ -1,7 +1,7 @@
 ---
 title: "Autonomous Navigation: GPS + IMU Field Traversal"
 sidebarTitle: "Overview"
-description: "AGRIBOT navigates farm rows autonomously using GPS coordinates and magnetometer heading with a PD controller, sensor noise filtering, and Mapviz visualization."
+description: "AGRIBOT navigates farm rows using GPS and magnetometer heading with a PD controller, sensor noise filtering, and Mapviz visualization."
 ---
 
 AGRIBOT's autonomous navigation stack converts GPS coordinates into local XY positions, computes heading error from a magnetometer, applies noise filters, and drives the robot with a PD controller. The three ROS nodes — `gps_converter`, `data_manipulation`, and `autonomousdrive` — work in a continuous feedback loop so the robot can traverse crop rows from a start GPS fix to an operator-specified goal without human intervention.

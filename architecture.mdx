@@ -1,7 +1,7 @@
 ---
-title: "AGRIBOT System Architecture and Module Overview"
+title: "AGRIBOT: System Architecture and ROS Module Overview"
 sidebarTitle: "Architecture"
-description: "AGRIBOT is organized into four modules: robot modeling, autonomous navigation, crop-weed classification, and simulation — each implemented as ROS packages."
+description: "AGRIBOT's Catkin workspace separates robot modeling, GPS navigation, CNN crop-weed classification, and Gazebo simulation into focused ROS packages."
 ---
 
 AGRIBOT follows a modular design philosophy that cleanly separates concerns across four distinct layers: the **Gazebo simulation environment** (which hosts the robot and virtual farm world), the **URDF robot model** (defined via Xacro macros and exported from SolidWorks meshes), the **ROS navigation stack** (GPS-guided waypoint following implemented in the `autonomous_drive` package), and the **CNN classification pipeline** (a standalone Python module for training and real-time inference). Each layer communicates through well-defined ROS topics, making it straightforward to swap out individual components — for example, replacing the simulated GPS plugin with a real NEO-M8N receiver requires only a change of topic source, not a rewrite of the navigation logic.
@@ -10,9 +10,9 @@ AGRIBOT follows a modular design philosophy that cleanly separates concerns acro
 
 The repository is organized into two top-level sections: the `Crop_Weed_ Classification` directory for all deep learning work, and the `agribot_ws` Catkin workspace for all ROS-based robot software.
 
-```
+```text
 Autonomous-Farm-Robot/
-├── Crop_Weed_ Classification/   # CNN training & inference scripts
+├── Crop_Weed_ Classification/   # CNN training & inference scripts (note trailing space in directory name)
 │   ├── model.py                 # UNet and Bonnet model definitions
 │   ├── main.py                  # Training entry point
 │   ├── predict.py               # Batch image prediction
@@ -25,8 +25,13 @@ Autonomous-Farm-Robot/
 │       ├── agribot_description/ # URDF, meshes, Gazebo worlds, launch files
 │       ├── agribot_control/     # ROS controllers (PID effort controllers)
 │       ├── autonomous_drive/    # GPS navigation nodes
+│       │   └── scripts/         # Python navigation scripts
+│       ├── imudata/             # Arduino IMU sketch (imudata.ino)
 │       ├── gps_umd/             # GPS ROS driver
 │       ├── mapviz/              # Map visualization
+│       ├── mapviz_plugins/      # Mapviz plugin extensions
+│       ├── multires_image/      # Multi-resolution image support for mapviz
+│       ├── tile_map/            # Tile-based map backend for mapviz
 │       ├── teleop_tools/        # Manual teleop (joystick, keyboard, mouse)
 │       └── marti_messages/      # Custom ROS message types
 ├── Datasets(Git)/               # Dataset analysis scripts
@@ -87,17 +92,21 @@ Each wheel uses `hardware_interface/EffortJointInterface` with a mechanical redu
 
 ### `autonomous_drive`
 
-The navigation package, written in Python (`rospy`), contains five key scripts:
+The navigation package, written in Python (`rospy`), contains five key scripts located in `agribot_ws/src/autonomous_drive/scripts/`:
 
 - **`GPS_data_conversion.py`** — the `gps_converter` node. Subscribes to `/agribot/fix` (`NavSatFix`) and converts GPS coordinates to local XY using an Alvin Mercator projection (`ll2xy`). Publishes distance to goal on `/distance`, current local pose on `/currentPose`, and bearing to goal on `angleOG`.
-- **`data_manipulation.py`** — the `data_manipulation` node. Subscribes to `/magnetic` (`Vector3Stamped`) and applies a Moving Median filter followed by a single-dimension Kalman filter to produce a clean heading angle, published on `/angle`.
+- **`data_manipulation.py`** — the `data_manipulation` node. Subscribes to `/magnetic` (`Vector3Stamped`) and applies a Moving Median filter followed by a single-dimension Kalman filter to produce a clean heading angle, published on `/angle` (`Float64`).
 - **`autonomus_drive.py`** — the main drive node. Combines bearing (`angleOG`) and filtered heading (`/angle`) to compute a heading error, then publishes `Twist` commands on `/agribot/cmd_vel`.
 - **`AutonomusDriveAction.py`** — action-server wrapper for sequencing multi-waypoint navigation.
 - **`plot.py`** — logs and plots heading and distance data for post-run analysis.
 
+### `imudata`
+
+Contains `imudata.ino`, the Arduino sketch that reads raw accelerometer and gyroscope data from the MPU-9265 over I²C and publishes it as a ROS `std_msgs/String` message on the `imu` topic at 10 Hz. In Gazebo simulation, this is replaced by the `libhector_gazebo_ros_imu.so` plugin. See the [Hardware page](/hardware) for a full code walkthrough.
+
 ### `gps_umd`, `mapviz`, `teleop_tools`, `marti_messages`
 
-These are supporting packages: `gps_umd` provides the real-hardware GPS ROS driver, `mapviz` provides a tile-map visualization tool where the robot's traced trajectory (blue line) and goal waypoints (green dots) are rendered, `teleop_tools` enables manual joystick or keyboard control for testing, and `marti_messages` provides custom ROS message definitions used by mapviz.
+These are supporting packages: `gps_umd` provides the real-hardware GPS ROS driver, `mapviz` (with `mapviz_plugins`, `tile_map`, and `multires_image`) provides a tile-map visualization tool where the robot's traced trajectory (blue line) and goal waypoints (green dots) are rendered, `teleop_tools` enables manual joystick or keyboard control for testing, and `marti_messages` provides custom ROS message definitions used by mapviz.
 
 ## ROS Node Communication Graph
 
@@ -148,7 +157,7 @@ The following describes the complete data flow from sensors through navigation t
 
 The `Crop_Weed_ Classification/` directory is a self-contained Python module independent of ROS, structured for both offline training and online deployment.
 
-```
+```text
 model.py        → Defines UNet and Bonnet architectures in PyTorch
 main.py         → Training loop: loads dataset, runs epochs, saves weights
 predict.py      → Runs inference on a folder of images, saves segmented outputs

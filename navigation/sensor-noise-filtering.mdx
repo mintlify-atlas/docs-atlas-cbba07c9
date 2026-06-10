@@ -1,10 +1,10 @@
 ---
-title: "Sensor Noise Filtering: Moving Median and Kalman Filter"
+title: "Sensor Noise Filtering for AGRIBOT Magnetometer Data"
 sidebarTitle: "Noise Filtering"
-description: "AGRIBOT reduces GPS and magnetometer noise using a Moving Median filter over 8 samples and a 1D Kalman filter to stabilize heading for reliable navigation."
+description: "AGRIBOT filters noisy magnetometer samples with a Moving Median window of 8 to stabilize heading and ensure accurate angular error for the PD controller."
 ---
 
-Raw GPS and magnetometer readings contain significant noise that causes erratic robot behaviour. Even small heading errors compound over distance in an open field, making reliable row traversal impossible without pre-processing. AGRIBOT addresses this by applying a Moving Median filter to collect and smooth magnetometer samples, followed optionally by a single-dimension Kalman filter — both implemented in `data_manipulation.py`.
+Raw magnetometer readings contain significant noise that causes erratic robot behaviour. Even small heading errors compound over distance in an open field, making reliable row traversal impossible without pre-processing. AGRIBOT addresses this by applying a Moving Median filter to collect and smooth magnetometer samples — implemented in `data_manipulation.py`.
 
 ## Moving Median Filter
 
@@ -20,6 +20,7 @@ def callback(msg, pub):
     magnetic_x = msg.vector.x
     magnetic_y = msg.vector.y
     RawHeading = atan2(magnetic_y, magnetic_x) * 180 / pi
+    mag_data.publish(RawHeading)
     lisheading.append(RawHeading)
     if i == 7:
         heading = -1 * medianFilter(lisheading)
@@ -28,6 +29,8 @@ def callback(msg, pub):
         i = 0
     i = i + 1
 ```
+
+Each raw heading sample is also published immediately on `Rawheading` via `mag_data.publish(RawHeading)`, so the unfiltered signal is available for real-time visualization in `plot.py` alongside the filtered output.
 
 The sign inversion (`-1 *`) applied to the median result aligns the magnetometer's sensor frame convention with the navigation frame used by the rest of the stack. Without this correction, the angular error fed to the PD controller would have the wrong sign, causing the robot to steer away from — rather than toward — the goal.
 
@@ -56,28 +59,19 @@ def angle_to_move(msg, angle_pub):
         angleToMove = angleToMove - 360
     elif angleToMove < -180:
         angleToMove = angleToMove + 360
+    else:
+        angleToMove = angleToMove
 
     angle_pub.publish(angleToMove)
 ```
 
 The two branches of the `if` statement handle the sign of the GPS bearing separately so that the subtraction always produces an error in the correct rotational direction. The normalization step at the end ensures the result stays within `[-180°, 180°]`, which prevents the PD controller from commanding a 350° rotation when a −10° correction would achieve the same result.
 
-The corrected angle is published on `/angle` and consumed directly by the `autonomousdrive` node.
-
-## Kalman Filter
-
-A single-dimension Kalman filter was also implemented to further smooth the heading signal beyond what the Moving Median alone achieves. The standard predict-update cycle for a scalar state is applied:
-
-- **Predict:** extrapolate the current heading estimate and grow the uncertainty (process noise).
-- **Update:** compute the Kalman gain from the current uncertainty and measurement noise, then blend the predicted estimate with the new magnetometer reading to produce a corrected estimate and a reduced uncertainty.
-
-The filter is particularly effective at handling slow-varying sensor drift that the median filter cannot remove, because the Kalman filter maintains an explicit noise model rather than simply discarding statistical outliers.
-
-Comparison plots of both approaches are included in the project README. The left panel shows the Moving Median output reducing spike noise while preserving heading transitions; the right panel shows the Kalman filter producing a smoother trace with lower steady-state variance at the cost of slightly more lag on sharp turns.
+The corrected angle is published on `angle` and consumed directly by the `autonomousdrive` node via its `/angle` subscriber.
 
 ## Visualization with plot.py
 
-The `plot.py` node subscribes to `Rawheading` and renders a live Matplotlib chart so developers can observe the raw versus filtered heading in real time during a simulation run:
+The `plot.py` node subscribes to `Rawheading` and renders a live Matplotlib chart so developers can observe the raw heading in real time during a simulation run:
 
 ```python
 rospy.init_node('plot')

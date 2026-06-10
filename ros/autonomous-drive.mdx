@@ -97,7 +97,7 @@ The `GPSAlgoV1()` function implements the navigation policy:
 - If `|orientation_error| > 10°`, it rotates in place (`linear.x = 0`).
 - If `|orientation_error| < 2°`, it moves straight at full speed (`linear.x = 0.4`).
 - Angular velocity is clamped to `±0.5 rad/s`.
-- When `distance_to_goal <= 1.0 m` or `destination_flag == 1`, the node stops all motion and latches the flag.
+- When `distance_to_goal <= 0.5 m` or `destination_flag == 1`, the node stops all motion and latches the flag.
 
 ```bash
 rosrun autonomous_drive autonomus_drive.py

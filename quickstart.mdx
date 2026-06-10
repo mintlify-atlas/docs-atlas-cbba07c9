@@ -41,7 +41,7 @@ This quickstart walks through launching the full AGRIBOT simulation — spawning
     roslaunch agribot_description my_world.launch
     ```
 
-    `my_world.launch` loads `Farm.world`, starts `joint_state_publisher` and `robot_state_publisher`, and automatically includes `agribot_control.launch` so you do not need to start the controllers separately.
+    `my_world.launch` loads `Farm.world`, starts `joint_state_publisher` and `robot_state_publisher`, and automatically includes `agribot_control.launch` so you do not need to start the controllers separately. It also opens the GPS converter and data manipulation nodes in separate `xterm` terminals automatically — **if you use `my_world.launch`, skip Steps 3, 4, and 5 and proceed directly to Step 6**.
   </Step>
 
   <Step title="Start the ROS controllers">
@@ -66,6 +66,10 @@ This quickstart walks through launching the full AGRIBOT simulation — spawning
     ```
 
     When prompted, enter the **latitude** and **longitude** of your navigation goal. The node will compute the bearing and distance from the robot's current GPS position to the goal.
+
+    <Note>
+      Skip this step if you launched `my_world.launch` — it already starts this node in an `xterm` terminal automatically.
+    </Note>
   </Step>
 
   <Step title="Launch the data manipulation node">
@@ -75,6 +79,10 @@ This quickstart walks through launching the full AGRIBOT simulation — spawning
     source devel/setup.bash
     rosrun autonomous_drive data_manipulation.py
     ```
+
+    <Note>
+      Skip this step if you launched `my_world.launch` — it already starts this node in an `xterm` terminal automatically.
+    </Note>
   </Step>
 
   <Step title="Launch the autonomous drive node">

@@ -24,7 +24,7 @@ def small_Unet(labels, h, w, out_activation):
       out_activation (str): 'sigmoid', 'softmax', or None
 
     Returns:
-      keras.Model: Compiled UNet model
+      keras.Model: UNet segmentation model
     """
 ```
 
@@ -54,7 +54,7 @@ A final `Conv2D(labels, 1×1)` collapses to the number of classes, followed by t
 
 - `'sigmoid'` — independent per-class binary probabilities
 - `'softmax'` — mutually exclusive class probabilities (recommended for multi-class segmentation)
-- `None` — raw logits (for use with a custom loss that applies activation internally)
+- `None` — raw logits (used by `load_unet()` which appends its own Reshape and Softmax)
 
 **Input shape:** `(h, w, 3)` — RGB
 
@@ -114,32 +114,35 @@ Four decoder stages mirror the four encoder stages, restoring the feature map to
 
 ### Output head
 
-A `Conv2D(labels, 1×1, relu)` collapses channels to the number of classes, followed by `Reshape(h*w, labels)` and a final `Softmax` activation. The output tensor has shape `(batch, h*w, labels)`, which matches the flattened mask format expected by the weighted categorical cross-entropy loss.
+A `Conv2D(labels, 1×1, relu)` collapses channels to the number of classes, followed by `Reshape(h*w, 3)` and a final `Softmax` activation. The output tensor has shape `(batch, h*w, 3)`, which matches the flattened mask format expected by the weighted categorical cross-entropy loss.
 
 ## Loading Models
 
 Both architectures are wrapped by convenience functions in `utils.py` that build, print a summary, and return the Keras model:
 
 ```python
-from model import small_Unet, bonnet
+from utils import load_unet, load_bonnet
 
 # ── UNet ────────────────────────────────────────────────────────────────────
-# 128×128 RGB input, 3 classes, softmax output
-unet_model = small_Unet(labels=3, h=128, w=128, out_activation='softmax')
+# 128×128 RGB input, 3 classes
+# load_unet calls small_Unet with out_activation=None, then appends Reshape+Softmax
+seg_model = load_unet(3, 128, 128)
 
 # ── Bonnet ───────────────────────────────────────────────────────────────────
 # 512×384 10-channel input, 3 classes
-bonnet_model = bonnet(labels=3, h=512, w=384)
+seg_model = load_bonnet(3, 512, 384)
 
 # Load pre-trained weights
-bonnet_model.load_weights('path/to/weights.h5')
+seg_model.load_weights('path/to/weights.h5')
 ```
 
 The `load_unet()` wrapper additionally appends a `Reshape` and `Softmax` layer to the raw `small_Unet` output so that UNet and Bonnet share the same `(batch, h*w, labels)` output format and can be compiled with the same loss function:
 
 ```python
-from utils import load_unet, load_bonnet
-
-seg_model = load_bonnet(3, 512, 384)   # returns model with summary printed
-seg_model.load_weights('v3.h5')
+def load_unet(labels, h, w):
+    model = small_Unet(labels, h, w, out_activation=None)
+    l = layers.Reshape((h*w, labels))(model.output)
+    output = layers.Activation("softmax")(l)
+    unet_model = Model(inputs=model.input, outputs=output)
+    return unet_model
 ```

@@ -1,5 +1,5 @@
 ---
-title: "GPS and IMU Sensor Integration in AGRIBOT"
+title: "GPS and IMU Sensor Integration in AGRIBOT Navigation"
 sidebarTitle: "GPS & IMU"
 description: "AGRIBOT uses an NEO-M8N GPS at 5 Hz and MPU-9265 magnetometer at 200 Hz. Coordinate conversion uses a Mercator projection for local XY navigation."
 ---
@@ -14,7 +14,7 @@ Raw GPS data arrives as WGS84 latitude and longitude. Before a PD controller can
 def ll2xy(lat, lon, orglat, orglon):
     '''
     AlvinXY: Lat/Long to X/Y
-    Converts Lat/Lon (WGS84) to local XY in meters using a Mercator projection.
+    Converts Lat/Lon (WGS84) to Alvin XYs using a Mercator projection.
 
     Args:
       lat (float): Latitude of location
@@ -23,7 +23,9 @@ def ll2xy(lat, lon, orglat, orglon):
       orglon (float): Longitude of origin location
 
     Returns:
-      tuple: (x, y) — Easting in m, Northing in m (local grid)
+      tuple: (x,y) where...
+        x is Easting in m (Alvin local grid)
+        y is Northing in m (Alvin local grid)
     '''
     x = (lon - orglon) * mdeglon(orglat)
     y = (lat - orglat) * mdeglat(orglat)

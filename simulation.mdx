@@ -11,10 +11,10 @@ AGRIBOT includes a complete Gazebo simulation environment featuring a 50 × 50 m
 The `agribot_description` and `agribot_control` packages expose five launch files that cover every stage of the simulation workflow, from bare URDF loading through to full autonomous drive.
 
 <AccordionGroup>
-  <Accordion title="agribot_description.launch — URDF and joint state publishers">
-    Loads `agribot_body.urdf.xacro` onto the ROS parameter server and starts `robot_state_publisher` and `joint_state_publisher`. Use this for URDF inspection and RViz-only visualization without a running Gazebo instance.
+  <Accordion title="agribot_description.launch — URDF, joint state publishers, and RViz">
+    Loads `agribot_body.urdf.xacro` onto the ROS parameter server and starts `robot_state_publisher`, `joint_state_publisher`, and RViz with a default display configuration. Use this for URDF inspection and RViz-only visualization without a running Gazebo instance.
 
-    **Nodes started:** `joint_state_publisher`, `robot_state_publisher`
+    **Nodes started:** `joint_state_publisher`, `robot_state_publisher`, `rviz`
   </Accordion>
 
   <Accordion title="agribot_gazebo_simulation.launch — Empty world spawn">
@@ -29,14 +29,14 @@ The `agribot_description` and `agribot_control` packages expose five launch file
     **Nodes started:** `gazebo`, `joint_state_publisher`, `robot_state_publisher`, `controller_spawner`, `gps_converter`, `sensor_data`, plus a static TF broadcaster
   </Accordion>
 
-  <Accordion title="agribot_rviz_display.launch — RViz visualization">
-    Opens RViz with a pre-configured `agribot_urdf.rviz` display file showing the robot model, TF tree, and sensor topics. Loads `agribot_body.urdf.xacro` and starts both state publisher nodes alongside RViz.
+  <Accordion title="agribot_rviz_display.launch — Robot state publishers">
+    Starts `joint_state_publisher` and `robot_state_publisher` only, without launching RViz or Gazebo. Use this as a lightweight base when you want to bring up the robot state topics and then open your own RViz session manually.
 
-    **Nodes started:** `joint_state_publisher`, `robot_state_publisher`, `rviz`
+    **Nodes started:** `joint_state_publisher`, `robot_state_publisher`
   </Accordion>
 
   <Accordion title="agribot_control.launch — Effort controllers">
-    Loads the PID controller configuration from `agribot_control/config/agribot_control.yaml` and spawns four effort controllers under the `/agribot` namespace: `rightwheelR_effort_controller`, `leftwheelR_effort_controller`, `rightwheelF_effort_controller`, and `leftwheelF_effort_controller`. Also loads `agribot_sensors.urdf.xacro` onto the parameter server.
+    Loads the PID controller configuration from `agribot_control/config/agribot_control.yaml` and spawns five controllers under the `/agribot` namespace: `joint_state_controller`, `rightwheelR_effort_controller`, `leftwheelR_effort_controller`, `rightwheelF_effort_controller`, and `leftwheelF_effort_controller`. Also loads `agribot_sensors.urdf.xacro` onto the parameter server.
 
     **Nodes started:** `controller_spawner`
   </Accordion>
@@ -59,7 +59,7 @@ roslaunch agribot_description agribot_rviz_display.launch
 
 The `Farm.world` SDF file defines the complete simulation environment. Understanding its structure helps when extending or debugging the scene.
 
-**Terrain layout.** The ground plane is a 50 × 50 m static model (`farm_field_0_0`) composed of 100 tiled 5 × 5 m panels. The central band of panels uses the `vrc/pavement` material (tarmac road surface), while the surrounding panels use the `vrc/grass` material — forming a visual distinction between the robot's driving corridor and the surrounding field.
+**Terrain layout.** The ground plane is a 50 × 50 m static model (`farm_field_0_0`) composed of 100 tiled 5 × 5 m visual panels. Most panels use the `vrc/grass` material, while an interior band of panels uses the `vrc/pavement` material (`Gazebo/Grey`) — creating a visual driving corridor distinct from the surrounding field grass.
 
 **CropWithWeed models.** The farm field is populated with a grid of `CropWithWeed` SDF objects, each a cylinder of radius 0.055 m and length 0.2 m placed 0.115 m above ground. Their visual material (`CropWithWeed/Diffuse`) is driven by a custom OGRE script (`CropWithWeed.material`) that applies a plant texture PNG. The cylinder geometry provides both a collision shape for the physics engine and a surface for the camera-based CNN classifier to segment.
 
@@ -97,7 +97,7 @@ Before running the autonomous drive nodes, you can drive AGRIBOT manually to ver
 rosrun key_teleop key_teleop.py
 
 # Joystick teleoperation
-roslaunch joy_teleop example.launch
+rosrun joy_teleop joy_teleop.py
 ```
 
 Both methods publish `geometry_msgs/Twist` messages to `/agribot/cmd_vel`, which the `libgazebo_ros_skid_steer_drive.so` plugin consumes to apply torque to all four wheel joints. Confirm the robot moves in the expected direction before starting the GPS navigation stack.

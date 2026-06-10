@@ -1,7 +1,7 @@
 ---
-title: "Crop-Weed Classification with CNN Segmentation"
+title: "Crop-Weed Classification: AGRIBOT Perception Overview"
 sidebarTitle: "Overview"
-description: "AGRIBOT classifies crops, weeds, and soil using Bonnet CNN trained on CWFID and BoniRob datasets, achieving real-time segmentation at ~2.5 fps on NVIDIA GPU."
+description: "AGRIBOT classifies crops, weeds, and soil with Bonnet CNN on CWFID and BoniRob datasets, achieving real-time segmentation at ~2.5 fps on NVIDIA GPU."
 ---
 
 AGRIBOT's perception module performs pixel-level semantic segmentation of farm images — classifying every pixel in the camera frame as one of three classes: **weed**, **crop**, or **soil**. Rather than bounding-box detection, the system produces dense, colour-coded prediction masks that allow the onboard actuator to target individual weed pixels with high spatial precision. The Bonnet architecture was selected over UNet as the final model because of its approximately 100× fewer parameters, making real-time inference practical on embedded GPU hardware such as the NVIDIA Jetson Nano.
@@ -63,6 +63,5 @@ The model is compiled with **weighted categorical cross-entropy** (`class_weight
 | Hardware | Average Inference Speed |
 |---|---|
 | Intel Core i7 8th Gen + 4 GB NVIDIA 940 MX | ~2.5 fps |
-| NVIDIA Jetson Nano (TensorRT optimised) | 5–10× faster (estimated) |
 
 Frame capture is threaded using `imutils.video.WebcamVideoStream` to decouple I/O latency from model inference, and `imutils.video.FPS` is used for accurate frame-rate measurement during the real-time loop.

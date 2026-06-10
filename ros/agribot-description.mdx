@@ -20,12 +20,16 @@ agribot_description/
 │   └── gate_sensor.urdf           # Gate sensor URDF
 ├── meshes/
 │   ├── base_link.STL              # Robot chassis mesh
-│   ├── wheel_1.STL – wheel_4.STL  # Wheel meshes
+│   ├── wheel_1.STL                # Wheel mesh (rear-left)
+│   ├── wheel_2.STL                # Wheel mesh (rear-right)
+│   ├── wheel_3.STL                # Wheel mesh (front-left)
+│   ├── wheel 4.STL                # Wheel mesh (front-right, note space in filename)
 │   └── camera.dae                 # Camera mesh (Collada)
 ├── worlds/
 │   ├── Farm.world                 # Full farm world with crops
 │   ├── final.world                # Final simulation world
-│   └── world1.world               # Development world
+│   ├── world1.world               # Development world
+│   └── volcano.world              # Terrain variation world
 ├── models/
 │   ├── CropWithWeed/              # Cylindrical crop+weed SDF model
 │   └── farm_field/                # Farm ground and soil textures
@@ -56,7 +60,7 @@ The include chain is:
 The Gazebo plugins added in `agribot_sensors.urdf.xacro` are:
 
 | Plugin | Library | Purpose |
-|--------|---------|---------|
+|--------|---------|---------| 
 | `gazebo_ros_control` | `libgazebo_ros_control.so` | ROS control bridge (exposes hardware interface) |
 | `skid_steer_drive_controller` | `libgazebo_ros_skid_steer_drive.so` | 4-wheel skid-steer kinematics |
 | `imu` | `libhector_gazebo_ros_imu.so` | IMU simulation with configurable Gaussian noise |
@@ -74,14 +78,21 @@ The skid-steer drive plugin bridges `/agribot/cmd_vel` Twist commands to individ
   <robotNamespace>/agribot</robotNamespace>
   <commandTopic>/agribot/cmd_vel</commandTopic>
   <odometryTopic>odom</odometryTopic>
+  <odometryFrame>odom</odometryFrame>
   <leftFrontJoint>base_link_to_left_wheel_F_joint</leftFrontJoint>
   <rightFrontJoint>base_link_to_right_wheel_F_joint</rightFrontJoint>
   <leftRearJoint>base_link_to_left_wheel_R_joint</leftRearJoint>
   <rightRearJoint>base_link_to_right_wheel_R_joint</rightRearJoint>
   <wheelSeparation>0.65</wheelSeparation>
   <wheelDiameter>0.2</wheelDiameter>
+  <robotBaseFrame>dummy_link</robotBaseFrame>
   <torque>20</torque>
+  <topicName>/agribot/cmd_vel</topicName>
   <broadcastTF>True</broadcastTF>
+  <covariance_x>0.000100</covariance_x>
+  <covariance_y>0.000100</covariance_y>
+  <covariance_z>0.000100</covariance_z>
+  <covariance_yaw>0.0100</covariance_yaw>
 </plugin>
 ```
 

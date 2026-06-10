@@ -1,7 +1,7 @@
 ---
-title: "Path Planning and PD Drive Control for AGRIBOT"
+title: "GPS Waypoint Path Planning and PD Control for AGRIBOT"
 sidebarTitle: "Path Planning"
-description: "AGRIBOT uses a GPS-waypoint PD controller with proportional-derivative gains to navigate crop rows, stop at goal, and support waypoint patrol via ROS move_base."
+description: "AGRIBOT uses a GPS-waypoint PD controller with proportional-derivative gains to navigate crop rows, stop at goal, and patrol waypoints via move_base."
 ---
 
 AGRIBOT's path planning is waypoint-based: the robot drives toward a GPS goal using a PD controller that computes linear and angular velocity commands from the heading error and distance to goal. There are no global maps or obstacle-avoidance planners involved — the assumption is that farm rows are clear corridors and the only task is accurate heading tracking over the distance to each waypoint. For multi-waypoint missions, the `AutonomusDriveAction.py` node wraps ROS `move_base` to cycle through a list of goal poses indefinitely.
